@@ -1,13 +1,11 @@
 import logo from './logo.svg';
+import fileUpload from './components/FileUploads';
 import './App.css';
 
 function App() {
   return (
     <div className="App">
-      <header className="App-header">
-        <img src={logo} className="App-logo" alt="logo" />
-        <input type = "file"></input>
-      </header>
+      <fileUpload />
     </div>
   );
 }
