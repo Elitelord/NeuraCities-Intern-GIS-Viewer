@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 
 const FileUpload = () => {
-  const [file, setFile] = useState<File | null>(null);
+  const [file, setFile] = useState(null);
 
   const handleFileChange = (e) => {
     if (e.target.files) {
@@ -16,7 +16,17 @@ const FileUpload = () => {
   return (
     <>
       <div className="input-group">
-        <input id="file" type="file" onChange={handleFileChange} />
+        <input id="file" type="file" onChange={(e) => {
+          if (e.target.files && e.target.files[0]) {
+            if(e.target.files[0].size > 1000 * 1024){
+              console.error("File size is too large");
+              return false;
+            }
+            else {
+              handleFileChange(e)
+            }
+          }
+        }} />
       </div>
       {file && (
         <section>

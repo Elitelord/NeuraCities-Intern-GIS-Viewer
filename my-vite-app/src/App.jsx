@@ -5,13 +5,14 @@ import './App.css'
 import FileUpload from './components/FileUpload'
 
 function App() {
-  const [count, setCount] = useState(0)
 
   return (
     <>
       <div>
-        <FileUpload />
+        <p className='read-the-docs'> Hi </p>
       </div>
+              <FileUpload />
+
     </>
   )
 }
