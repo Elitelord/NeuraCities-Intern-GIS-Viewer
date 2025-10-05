@@ -2,6 +2,7 @@ import React from 'react';
 import ShapefilePreview from '../pages/ShapefilePreview';
 import GeoJsonPreview from '../pages/GeojsonPreview';
 import CsvExcelPreview from '../pages/CsvExcelPreview';
+import KmzPreview from '../pages/KmzPreview';
 
 export default function PreviewRouter({ dataset, onClose }) {
   if (!dataset) return null;
@@ -14,6 +15,8 @@ export default function PreviewRouter({ dataset, onClose }) {
     case 'csv':
     case 'excel':
       return <CsvExcelPreview files={dataset.files} onClose={onClose} />;
+    case 'kmz':
+      return <KmzPreview files = {dataset.files} onClose={onClose} />;
     default:
       return (
         <div className="unsupported">

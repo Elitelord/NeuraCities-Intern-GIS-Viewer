@@ -921,7 +921,10 @@ const headers = data[0] && Object.keys(data[0]).length > 0 ? Object.keys(data[0]
         </div>
       </div>
       
-      <div ref={mapRef} className="absolute inset-0" />
+      <div className="relative w-full h-full min-h-[500px]">
+  <div ref={mapRef} className="absolute inset-0 h-full w-full" />
+</div>
+
     </div>
   );
 };

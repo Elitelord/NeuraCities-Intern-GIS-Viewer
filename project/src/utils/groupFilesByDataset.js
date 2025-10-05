@@ -49,6 +49,8 @@ export function groupFilesByDataset(fileList) {
       datasets.push({ kind: 'csv', label: f.name, files: [f] });
     } else if (['xlsx','xls'].includes(ext)) {
       datasets.push({ kind: 'excel', label: f.name, files: [f] });
+    } else if (ext === 'kmz') {
+      datasets.push({ kind: 'kmz', label: f.name, files: [f] });
     } else {
       datasets.push({ kind: 'unknown', label: f.name, files: [f] });
     }
