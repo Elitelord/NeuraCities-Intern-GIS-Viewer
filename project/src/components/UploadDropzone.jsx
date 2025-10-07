@@ -1,3 +1,4 @@
+import * as shp from 'shapefile';
 import React, { useCallback, useRef, useState } from 'react';
 import { validateRawFiles } from '../utils/validateFiles';
 import { groupFilesByDataset } from '../utils/groupFilesByDataset';

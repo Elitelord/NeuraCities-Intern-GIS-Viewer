@@ -1,43 +1,53 @@
 import React, { useState } from 'react';
 import UploadDropzone from '../components/UploadDropzone';
 import PreviewRouter from '../components/PreviewRouter';
+import MapComponent from '../components/MapComponent'; 
 
 export default function UploadAndPreview() {
-  const [datasets, setDatasets] = useState([]);
-  const [active, setActive] = useState(null);
+    const [fileObjects, setFileObjects] = useState([]);
+    const [selectedFile, setSelectedFile] = useState(null); 
 
-  return (
-    <div className="page">
-      <h1 className="page-title">Upload GIS Data</h1>
-      <UploadDropzone onDatasetsReady={setDatasets} />
+    const handleFilesUpdate = (files) => {
+        setFileObjects(files);
+        if (files.length > 0) {
+            setSelectedFile(files[0]); 
+        } else {
+            setSelectedFile(null);
+        }
+    };
 
-      {datasets.length > 0 && (
-        <div className="datasets">
-          <div className="datasets-title">Detected datasets</div>
-          <div className="datasets-grid">
-            {datasets.map((d, i) => (
-              <button
-                key={i}
-                onClick={() => setActive(d)}
-                className={`dataset-card ${active?.label === d.label ? 'active' : ''}`}
-              >
-                <div className="dataset-kind">{d.kind}</div>
-                <div className="dataset-label">{d.label}</div>
-                <div className="dataset-meta">{d.files.length} file(s)</div>
-              </button>
-            ))}
-          </div>
+    return (
+        <div className="main-container">
+            <UploadDropzone onFilesUpdate={handleFilesUpdate} />
+
+            <div style={{ display: 'flex', height: '80vh', marginTop: '20px' }}>
+                {/* Left Panel: File List and Previews */}
+                <div style={{ flex: 1, marginRight: '10px', overflow: 'auto' }}>
+                    <h3>Uploaded Files</h3>
+                    <ul>
+                        {fileObjects.map((file, index) => (
+                            <li
+                                key={index}
+                                onClick={() => setSelectedFile(file)}
+                                style={{
+                                    cursor: 'pointer',
+                                    fontWeight: selectedFile === file ? 'bold' : 'normal',
+                                    padding: '5px'
+                                }}
+                            >
+                                {file.fileName}
+                            </li>
+                        ))}
+                    </ul>
+                    <hr />
+                    {selectedFile && <PreviewRouter file={selectedFile} />}
+                </div>
+
+                {/* Right Panel: Map */}
+                <div style={{ flex: 2 }}>
+                    <MapComponent geojsonData={selectedFile ? selectedFile.geoJsonData : null} />
+                </div>
+            </div>
         </div>
-      )}
-
-      {active && (
-        <div className="preview-wrap">
-          <button className="btn close" onClick={() => setActive(null)}>Close preview</button>
-          <div className="preview-panel">
-            <PreviewRouter dataset={active} onClose={() => setActive(null)} />
-          </div>
-        </div>
-      )}
-    </div>
-  );
+    );
 }
