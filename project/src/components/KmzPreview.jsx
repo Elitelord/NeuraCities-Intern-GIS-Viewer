@@ -445,7 +445,7 @@ const KmzPreview = ({ files, onClose }) => {
   return (
     <div style={{ position: 'relative', width: '100%' }}>
       {/* Close button - positioned at the very top */}
-      {onClose && (
+      {/* {onClose && (
         <button
           onClick={onClose}
           style={{ 
@@ -474,7 +474,7 @@ const KmzPreview = ({ files, onClose }) => {
         >
           Close Preview
         </button>
-      )}
+      )} */}
       
       <div className="bg-white rounded-lg shadow-xl overflow-hidden">
         {/* Map container with explicit height */}

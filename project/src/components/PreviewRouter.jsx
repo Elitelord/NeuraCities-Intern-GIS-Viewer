@@ -1,8 +1,8 @@
 import React from 'react';
-import ShapefilePreview from '../pages/ShapefilePreview';
-import GeoJsonPreview from '../pages/GeojsonPreview';
-import CsvExcelPreview from '../pages/CsvExcelPreview';
-import KmzPreview from '../pages/KmzPreview';
+import ShapefilePreview from './ShapefilePreview';
+import GeoJsonPreview from './GeojsonPreview';
+import CsvExcelPreview from './CsvExcelPreview';
+import KmzPreview from './KmzPreview';
 
 export default function PreviewRouter({ dataset, onClose }) {
   if (!dataset) return null;

@@ -58,11 +58,16 @@
 .preview-panel {
   height: 520px; border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden; background: #fff;
 }
-.btn.close {
-  position: absolute; right: 12px; top: 12px;
-  background: rgba(255,255,255,.9); color: #0f172a; border: 1px solid #e2e8f0;
+.btn {
+  background: #008080;
+  color: #FFFFFF;
+  border: 1px solid #e2e8f0;
+  /* Add padding and rounded corners here if not using Tailwind */
+  padding: 0.25rem 0.75rem;
+  border-radius: 0.25rem;
+  font-size: 0.875rem;
 }
-.btn.close:hover { background: #fff; }
+.btn:hover { background: #2c3e50; }
 
 /* --- unsupported notice --- */
 .unsupported {
@@ -70,3 +75,14 @@
 }
 .unsupported-title { font-weight: 600; }
 .unsupported-desc { font-size: 14px; }
+/* Lower the map stacking so the export panel can appear above it.
+   Use carefully — this forces map layers below fixed overlays. */
+.leaflet-container, .mapboxgl-canvas, #map {
+  z-index: 0 !important;
+  position: relative !important;
+}
+
+/* If the map uses panes with high z-index values, this forces lower stacking */
+.leaflet-pane, .leaflet-map-pane {
+  z-index: 0 !important;
+}
