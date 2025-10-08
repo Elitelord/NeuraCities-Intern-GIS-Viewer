@@ -245,7 +245,8 @@ export default function ExportPanel({
               <p style={{ marginTop: 6, color: '#6b7280' }}>Choose output format and settings</p>
             </div>
             <div>
-              <button onClick={() => { onClose(); }} style={{ padding: '6px 10px', borderRadius: 6, border: 'none', background: 'transparent', cursor: 'pointer', color: '#374151' }}>Close</button>
+              <button onClick={() => { onClose(); }} className = "btn" >Close</button>
+              {/* style={{ padding: '6px 10px', borderRadius: 6, border: 'none', background: 'transparent', cursor: 'pointer', color: '#374151' }} */}
             </div>
           </div>
 
@@ -301,11 +302,12 @@ export default function ExportPanel({
           {/* view / manual download */}
           {lastBlobUrl && lastFilename && (
             <div style={{ marginTop: 14, display: 'flex', gap: 8, alignItems: 'center' }}>
-              <button onClick={() => window.open(lastBlobUrl, '_blank')} style={{ padding: '8px 10px', borderRadius: 8, border: '1px solid #e5e7eb', background: '#fff', cursor: 'pointer' }}>View file</button>
-
-              <a href={lastBlobUrl} download={lastFilename} style={{ padding: '8px 10px', borderRadius: 8, border: '1px solid #e5e7eb', background: '#fff', textDecoration: 'none', color: '#111' }}>Download</a>
-
-              <button onClick={() => { revokeLastBlob(); setDownloadError(null); }} title="Clear generated file" style={{ padding: '6px 8px', borderRadius: 8, border: '1px solid #efefef', background: '#fff', cursor: 'pointer', color: '#6b7280' }}>Clear</button>
+              <button onClick={() => window.open(lastBlobUrl, '_blank')} className='btn' >View file</button>
+{/* style={{ padding: '8px 10px', borderRadius: 8, border: '1px solid #e5e7eb', background: '#fff', cursor: 'pointer' }} */}
+              <button href={lastBlobUrl} download={lastFilename} className='btn'>Download</button>
+{/* style={{ padding: '8px 10px', borderRadius: 8, border: '1px solid #e5e7eb', background: '#fff', textDecoration: 'none', color: '#111' }} */}
+              <button onClick={() => { revokeLastBlob(); setDownloadError(null); }} title="Clear generated file" className='btn'>Clear</button>
+               {/* style={{ padding: '6px 8px', borderRadius: 8, border: '1px solid #efefef', background: '#fff', cursor: 'pointer', color: '#6b7280' }} */}
             </div>
           )}
 
