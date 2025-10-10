@@ -11,3 +11,24 @@ code {
   font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
     monospace;
 }
+html, body, #root {
+  height: 100%;
+}
+
+
+/* Ensure overlays appear above map; this is a safeguard if Tailwind z classes differ in your build */
+#generic-map {
+  z-index: 0;
+}
+.pointer-events-auto {
+  pointer-events: auto !important;
+}
+.app-reset-transform, .page {
+  transform: none !important;
+}
+
+/* ensure our fixed overlay is topmost fallback (only for dev/test) */
+.fixed-overlay-top {
+  position: fixed !important;
+  z-index: 99999 !important;
+}

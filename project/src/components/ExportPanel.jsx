@@ -302,8 +302,6 @@ export default function ExportPanel({
           {/* view / manual download */}
           {lastBlobUrl && lastFilename && (
             <div style={{ marginTop: 14, display: 'flex', gap: 8, alignItems: 'center' }}>
-              <button onClick={() => window.open(lastBlobUrl, '_blank')} className='btn' >View file</button>
-{/* style={{ padding: '8px 10px', borderRadius: 8, border: '1px solid #e5e7eb', background: '#fff', cursor: 'pointer' }} */}
               <button href={lastBlobUrl} download={lastFilename} className='btn'>Download</button>
 {/* style={{ padding: '8px 10px', borderRadius: 8, border: '1px solid #e5e7eb', background: '#fff', textDecoration: 'none', color: '#111' }} */}
               <button onClick={() => { revokeLastBlob(); setDownloadError(null); }} title="Clear generated file" className='btn'>Clear</button>

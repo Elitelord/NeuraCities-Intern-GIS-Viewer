@@ -54,15 +54,15 @@ export default function UploadDropzone({ onDatasetsReady }) {
   };
 
   return (
-    <div className="upload-wrapper max-w-4xl mx-auto">
-      <div
-        className={`dropzone ${dragOver ? 'drag' : ''} border-2 border-dashed rounded-xl p-12 transition-all ${
-          dragOver ? 'border-teal-500 bg-teal-50' : 'border-gray-300 bg-white hover:border-gray-400'
-        }`}
-        onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-        onDragLeave={() => setDragOver(false)}
-        onDrop={onDrop}
-      >
+    <div className="upload-wrapper max-w-4xl mx-auto pointer-events-auto z-[10001]">
+    <div
+      className={`dropzone ${dragOver ? 'drag' : ''} border-2 border-dashed rounded-xl p-8 transition-all ${
+        dragOver ? 'border-teal-500 bg-teal-50' : 'border-gray-300 bg-white hover:border-gray-400'
+      }`}
+      onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+      onDragLeave={() => setDragOver(false)}
+      onDrop={onDrop}
+    >
         <div className="text-center">
           <p className="dz-title text-xl font-semibold text-gray-700 mb-2">
             Drag & drop GIS files here
@@ -90,7 +90,7 @@ export default function UploadDropzone({ onDatasetsReady }) {
           </p>
         </div>
       </div>
-
+ <div className="mt-4 max-h-[40vh] overflow-auto">
       {progress > 0 && (
         <div className="progress mt-6">
           <div className="flex items-center justify-between mb-2">
@@ -135,6 +135,7 @@ export default function UploadDropzone({ onDatasetsReady }) {
           </div>
         </div>
       )}
+      </div>
 
       {/* {uploadedFiles.length > 0 && !showSuccess && progress === 0 && (
         <div className="mt-6 bg-white border border-gray-200 rounded-lg p-4">
