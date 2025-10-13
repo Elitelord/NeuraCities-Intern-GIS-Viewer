@@ -1,111 +1,86 @@
+// src/pages/UploadAndPreview.jsx
 import React, { useEffect, useState } from "react";
+import MapWorkspace from "../components/MapWorkspace";
 import UploadDropzone from "../components/UploadDropzone";
 import PreviewRouter from "../components/PreviewRouter";
 import ExportPanel from "../components/ExportPanel";
-import MapBackground from "../components/MapBackground";
-import FloatingToolbar from "../components/FloatingToolbar";
 
 export default function UploadAndPreview() {
   const [datasets, setDatasets] = useState([]);
   const [active, setActive] = useState(null);
   const [isExportOpen, setIsExportOpen] = useState(false);
 
+  // pick first dataset once uploaded
+  useEffect(() => {
+    if (datasets.length && !active) setActive(datasets[0]);
+  }, [datasets, active]);
+
   const hasData = datasets.length > 0;
 
-  // When overlay is shown, lock page scroll so dialog stays centered in viewport
-  useEffect(() => {
-    const overlayVisible = !hasData;
-    if (overlayVisible) {
-      const prev = document.body.style.overflow;
-      document.body.style.overflow = "hidden";
-      return () => {
-        document.body.style.overflow = prev || "";
-      };
-    }
-    return undefined;
-  }, [hasData]);
-
-  const handleDatasetsReady = (ds) => {
-    setDatasets(ds);
-  };
-
   return (
-    <div className="relative w-full h-screen overflow-hidden bg-gray-100">
-      {/* Generic background map - always visible when no preview is active */}
-      {!active && (
-        <div className="absolute inset-0 z-0">
-          <MapBackground activeDataset={null} />
-        </div>
-      )}
+    <div className="workspace">
+      {/* Background map */}
+      <div className="map-root">
+        <MapWorkspace datasets={datasets} active={active} />
+      </div>
 
-      {/* Upload overlay: appears on top of map background */}
+      {/* Upload overlay (visible until we have datasets) */}
       {!hasData && (
-        <div
-          className="fixed inset-0 flex items-center justify-center pointer-events-none"
-          style={{ zIndex: 50 }}
-          role="dialog"
-          aria-modal="true"
-        >
-          {/* Dialog container */}
-          <div className="w-full max-w-3xl mx-auto p-6 pointer-events-auto">
-            <div
-              className="bg-white rounded-xl shadow-2xl overflow-hidden border border-gray-200"
-              style={{ maxHeight: "90vh" }}
-            >
-              {/* Header */}
-              <div className="px-6 py-5 border-b bg-gradient-to-r from-teal-50 to-blue-50">
-                <h1 className="text-2xl md:text-3xl font-bold text-center text-gray-800">
-                  Upload GIS Data
-                </h1>
-                <p className="text-center text-gray-600 mt-2">
-                  Start by uploading your geospatial files
-                </p>
-              </div>
-
-              {/* Content area with scroll */}
-              <div className="p-6 overflow-auto" style={{ maxHeight: "calc(90vh - 120px)" }}>
-                <UploadDropzone onDatasetsReady={handleDatasetsReady} />
-              </div>
-            </div>
+        <div className="upload-overlay">
+          <div className="upload-card">
+            <UploadDropzone onDatasetsReady={setDatasets} />
           </div>
         </div>
       )}
 
-      {/* Floating toolbar (after upload) */}
+      {/* Mini toolbar (left) once data is present */}
       {hasData && (
-        <div className="absolute bottom-6 left-6" style={{ zIndex: 40 }}>
-          <FloatingToolbar
-            datasets={datasets}
-            active={active}
-            onSelect={setActive}
-            onAddNew={() => {
-              setDatasets([]);
-              setActive(null);
-            }}
-            onExport={() => setIsExportOpen(true)}
-          />
+        <div className="mini-toolbar">
+          <div className="toolbar-section">
+            <div className="toolbar-title">Datasets</div>
+            <div className="toolbar-list">
+              {datasets.map((d, i) => (
+                <button
+                  key={i}
+                  className={
+                    "toolbar-item " + (active?.label === d.label ? "is-active" : "")
+                  }
+                  onClick={() => setActive(d)}
+                >
+                  {d.label} — {d.kind}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="toolbar-section">
+            <div className="toolbar-title">Actions</div>
+            <button className="btn" onClick={() => setIsExportOpen(true)}>
+              Export…
+            </button>
+          </div>
         </div>
       )}
 
-      {/* Dataset preview - shows the actual map preview */}
-      {active && (
-        <div 
-          className="absolute inset-0 bg-white"
-          style={{ zIndex: 10 }}
-        >
-          <PreviewRouter dataset={active} />
-          
-          {/* Close button for preview */}
-          <button 
-            onClick={() => setActive(null)} 
-            className="absolute top-4 right-4 bg-white hover:bg-gray-100 text-gray-700 px-4 py-2 rounded-lg shadow-lg border border-gray-200 font-medium transition-colors"
-            style={{ zIndex: 45 }}
-          >
-            Close Preview
-          </button>
+      {/* Floating preview panel (bottom-right) */}
+      {hasData && active && (
+        <div className="preview-fab">
+          <div className="preview-panel">
+            <div className="preview-header">
+              <div className="text-sm">
+                Previewing <strong>{active.label}</strong> — {active.kind}
+              </div>
+              <button className="btn" onClick={() => setActive(null)}>
+                Close preview
+              </button>
+            </div>
+
+            <PreviewRouter dataset={active} onClose={() => setActive(null)} />
+          </div>
         </div>
       )}
 
+      {/* Slide-over export */}
       <ExportPanel
         datasets={datasets}
         selectedDataset={active}
