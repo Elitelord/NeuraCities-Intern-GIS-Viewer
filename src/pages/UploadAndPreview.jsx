@@ -1,77 +1,90 @@
-import React, { useState } from 'react';
-import UploadDropzone from '../components/UploadDropzone';
-import PreviewRouter from '../components/PreviewRouter';
-import ExportPanel from '../components/ExportPanel';
+// src/pages/UploadAndPreview.jsx
+import React, { useEffect, useState } from "react";
+import MapWorkspace from "../components/MapWorkspace";
+import UploadDropzone from "../components/UploadDropzone";
+import PreviewRouter from "../components/PreviewRouter";
+import ExportPanel from "../components/ExportPanel";
 
 export default function UploadAndPreview() {
-  const [datasets, setDatasets] = useState([]); // set by UploadDropzone -> onDatasetsReady
-  const [active, setActive] = useState(null); // currently previewed dataset
+  const [datasets, setDatasets] = useState([]);
+  const [active, setActive] = useState(null);
   const [isExportOpen, setIsExportOpen] = useState(false);
 
+  // pick first dataset once uploaded
+  useEffect(() => {
+    if (datasets.length && !active) setActive(datasets[0]);
+  }, [datasets, active]);
+
+  const hasData = datasets.length > 0;
+
   return (
-    <div className="page relative">
-      <h1 className="page-title">Upload GIS Data</h1>
+    <div className="workspace">
+      {/* Background map */}
+      <div className="map-root">
+        <MapWorkspace datasets={datasets} active={active} />
+      </div>
 
-      <UploadDropzone onDatasetsReady={setDatasets} />
-
-      {datasets.length > 0 && (
-        <div className="datasets mt-6">
-          <div className="datasets-title">Detected datasets</div>
-          <div className="datasets-grid mt-2 grid gap-3 sm:grid-cols-2 md:grid-cols-3">
-            {datasets.map((d, i) => (
-              <button
-                key={i}
-                onClick={() => setActive(d)}
-                className={`dataset-card p-3 rounded border text-left hover:shadow ${active?.label === d.label ? 'border-teal-600 bg-teal-50' : 'border-gray-200 bg-white'}`}
-              >
-                <div className="dataset-kind text-xs text-gray-500">{d.kind}</div>
-                <div className="dataset-label font-semibold">{d.label}</div>
-                <div className="dataset-meta text-xs text-gray-400">{(d.files?.length ?? 0)} file(s)</div>
-              </button>
-            ))}
+      {/* Upload overlay (visible until we have datasets) */}
+      {!hasData && (
+        <div className="upload-overlay">
+          <div className="upload-card">
+            <UploadDropzone onDatasetsReady={setDatasets} />
           </div>
         </div>
       )}
 
-      {active && (
-        <div className="preview-wrap mt-6 relative bg-white border rounded-lg p-4">
-          <div className="flex items-start justify-between mb-4">
-            <div className="flex items-center gap-3 p-3 bg-white border-b"> 
-  
-  < button
-    onClick={() => setIsExportOpen(true)}
-    className="btn" /* Use your simplified CSS class */
-  >
-    Export
-  </button>
-  
-  <button 
-    className="btn" /* Use your simplified CSS class */
-    onClick={() => setActive(null)}
-  >
-    Close preview
-  </button>
-  
-  {/* This text will align nicely in the middle */}
-  <div className="text-sm text-gray-600">
-    Previewing <strong>{active.label}</strong> — Type: {active.kind}
-  </div>
-
-</div>
-
+      {/* Mini toolbar (left) once data is present */}
+      {hasData && (
+        <div className="mini-toolbar">
+          <div className="toolbar-section">
+            <div className="toolbar-title">Datasets</div>
+            <div className="toolbar-list">
+              {datasets.map((d, i) => (
+                <button
+                  key={i}
+                  className={
+                    "toolbar-item " + (active?.label === d.label ? "is-active" : "")
+                  }
+                  onClick={() => setActive(d)}
+                >
+                  {d.label} — {d.kind}
+                </button>
+              ))}
+            </div>
           </div>
 
+          <div className="toolbar-section">
+            <div className="toolbar-title">Actions</div>
+            <button className="btn" onClick={() => setIsExportOpen(true)}>
+              Export…
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Floating preview panel (bottom-right) */}
+      {hasData && active && (
+        <div className="preview-fab">
           <div className="preview-panel">
+            <div className="preview-header">
+              <div className="text-sm">
+                Previewing <strong>{active.label}</strong> — {active.kind}
+              </div>
+              <button className="btn" onClick={() => setActive(null)}>
+                Close preview
+              </button>
+            </div>
+
             <PreviewRouter dataset={active} onClose={() => setActive(null)} />
           </div>
         </div>
       )}
 
-      {/* Export slide-over */}
+      {/* Slide-over export */}
       <ExportPanel
         datasets={datasets}
         selectedDataset={active}
-        onSelectDataset={(d) => setActive(d)}
+        onSelectDataset={setActive}
         isOpen={isExportOpen}
         onClose={() => setIsExportOpen(false)}
       />

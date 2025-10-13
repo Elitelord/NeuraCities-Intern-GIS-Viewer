@@ -1,9 +1,9 @@
-import React from 'react';
-import './App.css';
-import UploadAndPreview from './pages/UploadAndPreview';
+import React from "react";
+import "./App.css";
+import MapWorkspace from "./components/MapWorkspace";
+import UploadAndPreview from "./pages/UploadAndPreview";
 
-function App() {
+
+export default function App() {
   return <UploadAndPreview />;
 }
-
-export default App;
