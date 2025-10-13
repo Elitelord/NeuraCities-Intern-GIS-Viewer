@@ -1,4 +1,7 @@
 {
+  "name": "project",
+  "version": "0.1.0",
+  "private": true,
   "dependencies": {
     "@tmcw/togeojson": "^7.1.2",
     "jszip": "^3.10.1",
@@ -8,14 +11,8 @@
     "react-dom": "^18.3.1",
     "react-scripts": "^5.0.1",
     "shpjs": "^6.2.0",
-    "xlsx": "^0.18.5"
-  },
-  "devDependencies": {
-    "@vitejs/plugin-react": "^5.0.4",
-    "autoprefixer": "^10.4.21",
-    "postcss": "^8.5.6",
-    "tailwindcss": "^4.1.14",
-    "vite": "^7.1.7"
+    "web-vitals": "^2.1.4",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
   "scripts": {
     "start": "react-scripts start",
