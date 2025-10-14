@@ -1,124 +1,53 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import ShapefilePreview from './ShapefilePreview';
 import GeoJsonPreview from './GeojsonPreview';
 import CsvExcelPreview from './CsvExcelPreview';
 import KmzPreview from './KmzPreview';
 
-export default function PreviewRouter({ dataset, onClose }) {
-  // file-like object that GeoJsonPreview expects in its `files` prop
-  const [convertedFile, setConvertedFile] = useState(null);
-  const [sourceKind, setSourceKind] = useState(null);
-  const [isConverting, setIsConverting] = useState(false);
-  const [convertError, setConvertError] = useState(null);
-
-  useEffect(() => {
-    // Reset whenever dataset changes
-    setConvertedFile(null);
-    setSourceKind(dataset?.kind || null);
-    setIsConverting(false);
-    setConvertError(null);
-  }, [dataset]);
-
+/**
+ * PreviewRouter
+ * - Renders ONLY the preview component. No outer boxes or headers.
+ * - Keyed by dataset identity so the preview remounts & reparses when switching.
+ */
+export default function PreviewRouter({ dataset, onGeoJSONReady, onStyleChange }) {
   if (!dataset) return null;
 
-  // Helper: receive a FeatureCollection object and convert into a File for GeoJsonPreview
-  const handleConvert = async (featureCollection) => {
-    try {
-      setIsConverting(true);
-      setConvertError(null);
-
-      if (!featureCollection || featureCollection.type !== 'FeatureCollection') {
-        throw new Error('Converter returned invalid GeoJSON FeatureCollection');
-      }
-
-      const json = JSON.stringify(featureCollection, null, 2);
-      // Create a File so GeoJsonPreview can read .text() like a normal uploaded file
-      const blob = new Blob([json], { type: 'application/geo+json' });
-      // Some environments (browsers) support the File constructor; fallback to blob if not
-      let file;
-      try {
-        file = new File([blob], 'converted.geojson', { type: 'application/geo+json' });
-      } catch (e) {
-        // older browsers: attach name to blob-like object
-        file = blob;
-        file.name = 'converted.geojson';
-      }
-
-      setConvertedFile(file);
-    } catch (err) {
-      console.error('PreviewRouter: conversion failed', err);
-      setConvertError(err?.message || String(err));
-    } finally {
-      setIsConverting(false);
+  const emitFC = ({ label, geojson }) => {
+    onGeoJSONReady?.({ label, geojson });
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('geojson:ready', { detail: { label, geojson } }));
     }
   };
 
-  // Back to converter (clears converted file)
-  const handleBackToConverter = () => {
-    setConvertedFile(null);
-    setConvertError(null);
-    setIsConverting(false);
+  const common = {
+    files: dataset.files,
+    onConvert: (fc) => {
+      if (!fc || fc.type !== 'FeatureCollection') return;
+      emitFC({ label: dataset.label, geojson: fc });
+    }
   };
 
-  // If dataset is already geojson, show GeoJsonPreview directly
-  if (dataset.kind === 'geojson') {
-    return <GeoJsonPreview files={dataset.files} onClose={onClose} />;
-  }
+  const k = `${dataset.label}::${dataset.kind}`; // ⬅️ forces remount on change
 
-  // If we have a converted geojson, show the GeoJsonPreview with that file
-  if (convertedFile) {
-    const filesForGeojson = [convertedFile];
+  if (dataset.kind === 'geojson') {
     return (
-      <div style={{ position: 'relative', width: '100%', height: '100%' }}>
-        <GeoJsonPreview files={filesForGeojson} onClose={onClose} />
-      </div>
+      <GeoJsonPreview
+        key={k}
+        files={dataset.files}
+        onConvert={(fc) => emitFC({ label: dataset.label, geojson: fc })}
+        onStyleChange={onStyleChange}
+      />
     );
   }
-
-  // If conversion in progress or error, show a small status UI and still render the converter
-  const converterCommonProps = {
-    files: dataset.files,
-    onClose
-  };
-
-  // Render the appropriate converter preview and pass onConvert to receive FeatureCollection
   switch (dataset.kind) {
     case 'shapefile':
-      return (
-        <div>
-          {isConverting && <div style={{ padding: 8, color: '#0ea5a4' }}>Converting…</div>}
-          {convertError && <div style={{ padding: 8, color: '#dc2626' }}>Conversion error: {convertError}</div>}
-          <ShapefilePreview {...converterCommonProps} onConvert={handleConvert} />
-        </div>
-      );
-
+      return <ShapefilePreview key={k} {...common} />;
     case 'csv':
     case 'excel':
-      return (
-        <div>
-          {isConverting && <div style={{ padding: 8, color: '#0ea5a4' }}>Converting…</div>}
-          {convertError && <div style={{ padding: 8, color: '#dc2626' }}>Conversion error: {convertError}</div>}
-          <CsvExcelPreview {...converterCommonProps} onConvert={handleConvert} />
-        </div>
-      );
-
+      return <CsvExcelPreview key={k} {...common} />;
     case 'kmz':
-      return (
-        <div>
-          {isConverting && <div style={{ padding: 8, color: '#0ea5a4' }}>Converting…</div>}
-          {convertError && <div style={{ padding: 8, color: '#dc2626' }}>Conversion error: {convertError}</div>}
-          <KmzPreview {...converterCommonProps} onConvert={handleConvert} />
-        </div>
-      );
-
+      return <KmzPreview key={k} {...common} />;
     default:
-      return (
-        <div className="unsupported" style={{ padding: 20 }}>
-          <div className="unsupported-title" style={{ fontWeight: 700, marginBottom: 6 }}>Unsupported file (yet)</div>
-          <div className="unsupported-desc">
-            We detected “{dataset.label}” but don’t have a previewer for this format.
-          </div>
-        </div>
-      );
+      return null;
   }
 }
