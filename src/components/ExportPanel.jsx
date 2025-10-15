@@ -1,6 +1,9 @@
 // ExportPanel.jsx
 import React, { useEffect, useState, useCallback } from 'react';
 import ReactDOM from 'react-dom';
+import JSZip from 'jszip'; // if not already imported
+import { csvToGeoJSON, kmzToGeoJSON} from './converters/fromFiles';
+import { geojsonToCSV, geojsonToKMZ, geojsonToKML } from './converters/geojsonConverters';
 
 /**
  * ExportPanel (robust download)
@@ -130,48 +133,210 @@ export default function ExportPanel({
   return false;
 };
 
-  const exportGeoJSON = (dataset) => {
+const exportGeoJSON = async (dataset) => {
   console.log('[ExportPanel] exportGeoJSON called', dataset);
   if (!dataset) {
     console.warn('[ExportPanel] No dataset provided');
+    setDownloadError('No dataset provided.');
     return null;
   }
 
   let fc = null;
-  if (dataset.type === 'FeatureCollection' && Array.isArray(dataset.features)) fc = dataset;
-  else if (Array.isArray(dataset.features)) fc = { type: 'FeatureCollection', features: dataset.features };
-  else if (dataset.geojson) fc = dataset.geojson;
-  else {
-    console.warn('[ExportPanel] Could not determine GeoJSON from dataset', dataset);
+
+  try {
+    // 1) Already a FeatureCollection object
+    if (dataset.type === 'FeatureCollection' && Array.isArray(dataset.features)) {
+      fc = dataset;
+    }
+    // 2) Has features array but isn't labeled FeatureCollection
+    else if (Array.isArray(dataset.features)) {
+      fc = { type: 'FeatureCollection', features: dataset.features };
+    }
+    // 3) Has an attached geojson property (from preview or previous conversion)
+    else if (dataset.geojson && dataset.geojson.type === 'FeatureCollection') {
+      fc = dataset.geojson;
+    }
+    // 4) If there's an uploaded file and it's a .geojson file, read and parse it
+    else if (dataset.files && dataset.files.length > 0) {
+      const file = dataset.files[0];
+      const name = (file.name || '').toLowerCase();
+
+      // If it's a plain geojson file, parse it
+      if (name.endsWith('.geojson') || name.endsWith('.json')) {
+        try {
+          const text = await file.text();
+          const json = JSON.parse(text);
+          if (json.type === 'FeatureCollection') fc = json;
+          else if (json.type === 'Feature') fc = { type: 'FeatureCollection', features: [json] };
+          else if (json.type) fc = { type: 'FeatureCollection', features: [{ type: 'Feature', properties: {}, geometry: json }] };
+          else {
+            setDownloadError('Uploaded JSON is not valid GeoJSON.');
+            return null;
+          }
+        } catch (err) {
+          console.error('[ExportPanel] Parsing uploaded geojson failed', err);
+          setDownloadError('Failed to parse uploaded GeoJSON: ' + (err.message || err));
+          return null;
+        }
+      }
+      // If it's a KMZ or CSV file, attempt on-demand converters (keep existing behavior)
+      else if (dataset.kind === 'kmz' || name.endsWith('.kmz')) {
+        try {
+          fc = await kmzToGeoJSON(file);
+        } catch (err) {
+          console.error('[ExportPanel] kmzToGeoJSON failed', err);
+          setDownloadError('KMZ → GeoJSON conversion failed: ' + (err.message || err));
+          return null;
+        }
+      } else if (dataset.kind === 'csv' || name.endsWith('.csv')) {
+        try {
+          fc = await csvToGeoJSON(file);
+          if (!fc || !Array.isArray(fc.features) || fc.features.length === 0) {
+            setDownloadError('CSV conversion yielded no mappable features (no coordinate columns found).');
+            return null;
+          }
+        } catch (err) {
+          console.error('[ExportPanel] csvToGeoJSON failed', err);
+          setDownloadError('CSV → GeoJSON conversion failed: ' + (err.message || err));
+          return null;
+        }
+      } else {
+        console.warn('[ExportPanel] No on-demand converter for dataset kind:', dataset.kind, file && file.name);
+        setDownloadError('No on-demand converter available for this file type.');
+        return null;
+      }
+    } else {
+      console.warn('[ExportPanel] Could not determine GeoJSON from dataset', dataset);
+      setDownloadError('Could not determine GeoJSON from selected dataset.');
+      return null;
+    }
+
+    // Final validation
+    if (!fc || !Array.isArray(fc.features)) {
+      console.warn('[ExportPanel] Conversion produced invalid FeatureCollection', fc);
+      setDownloadError('Converted GeoJSON is invalid.');
+      return null;
+    }
+
+    // expose for debugging
+    try { window.__DEBUG_LAST_GEOJSON__ = fc; } catch (e) {}
+
+    // Build download (still provide the .geojson as before)
+    const filename = `${(dataset.label || 'dataset').replace(/\s+/g, '_')}.geojson`;
+    const blob = new Blob([JSON.stringify(fc, null, 2)], { type: 'application/geo+json;charset=utf-8' });
+    createAndDownload(filename, blob);
+    console.log('[ExportPanel] FeatureCollection prepared & downloaded', fc.features.length);
+
+    // Return the parsed FeatureCollection so callers (e.g. exportCSV) can reuse it
+    return fc;
+  } catch (err) {
+    console.error('[ExportPanel] exportGeoJSON unexpected error', err);
+    setDownloadError('ExportGeoJSON failed: ' + (err.message || err));
+    return null;
+  }
+};
+
+
+    // Replace the old exportCSV with this
+// Make sure exportGeoJSON is defined above and is async (as we changed earlier).
+const exportCSV = async (dataset) => {
+  console.log('[ExportPanel] exportCSV called', dataset);
+  if (!dataset) {
+    setDownloadError('No dataset provided.');
     return null;
   }
 
-  console.log('[ExportPanel] FeatureCollection prepared', fc.features?.length);
-  const filename = `${(dataset.label || 'dataset').replace(/\s+/g, '_')}.geojson`;
-  const blob = new Blob([JSON.stringify(fc, null, 2)], { type: 'application/geo+json' });
+  let fc = null;
 
-  const result = createAndDownload(filename, blob);
-  console.log('[ExportPanel] createAndDownload result:', result);
-  return filename;
+  // Prefer explicit FeatureCollection sources
+  if (dataset.type === 'FeatureCollection' && Array.isArray(dataset.features)) {
+    fc = dataset;
+  } else if (dataset.features && Array.isArray(dataset.features)) {
+    fc = { type: 'FeatureCollection', features: dataset.features };
+  } else if (dataset.geojson && dataset.geojson.type === 'FeatureCollection') {
+    fc = dataset.geojson;
+  }
+
+  // If we still don't have fc, try to obtain it via exportGeoJSON (this will convert files if needed)
+  if (!fc) {
+    try {
+      console.log('[ExportPanel] No FeatureCollection found locally, attempting exportGeoJSON(...) to obtain one');
+      const maybeFc = await exportGeoJSON(dataset);
+      if (maybeFc && maybeFc.type === 'FeatureCollection') {
+        fc = maybeFc;
+      } else if (dataset.geojson && dataset.geojson.type === 'FeatureCollection') {
+        fc = dataset.geojson;
+      } else if (window.__DEBUG_LAST_GEOJSON__ && window.__DEBUG_LAST_GEOJSON__.type === 'FeatureCollection') {
+        fc = window.__DEBUG_LAST_GEOJSON__;
+      }
+    } catch (err) {
+      console.error('[ExportPanel] exportGeoJSON (for CSV) failed', err);
+      setDownloadError('Conversion to GeoJSON failed: ' + (err.message || err));
+      return null;
+    }
+  }
+
+  // If still no FeatureCollection, but dataset.rows exist, export rows as CSV
+  if (!fc || !Array.isArray(fc.features) || fc.features.length === 0) {
+    if (dataset.rows && Array.isArray(dataset.rows) && dataset.rows.length) {
+      const rows = dataset.rows;
+      const keys = Array.from(rows.reduce((acc, r) => { Object.keys(r || {}).forEach(k => acc.add(k)); return acc; }, new Set()));
+      const csvLines = [ keys.join(','), ...rows.map(r => keys.map(k => {
+        const v = r[k];
+        if (v === null || v === undefined) return '';
+        const s = String(v).replace(/"/g, '""');
+        return s.includes(',') || s.includes('"') ? `"${s}"` : s;
+      }).join(',')) ];
+      const filename = `${(dataset.label || 'dataset').replace(/\s+/g, '_')}.csv`;
+      const blob = new Blob([csvLines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+      createAndDownload(filename, blob);
+      return filename;
+    }
+
+    console.warn('[ExportPanel] exportCSV cannot locate GeoJSON or rows');
+    setDownloadError('No geojson/features/rows available for CSV export.');
+    return null;
+  }
+
+  // Now convert FeatureCollection -> CSV using your converter
+  try {
+    const { blob, filename } = geojsonToCSV(fc, { geometry: 'wkt', includeProperties: true });
+    const outBlob = blob instanceof Blob ? blob : new Blob([blob], { type: 'text/csv;charset=utf-8;' });
+    createAndDownload(filename, outBlob);
+    return filename;
+  } catch (err) {
+    console.error('[ExportPanel] geojsonToCSV failed', err);
+    setDownloadError('CSV export failed: ' + (err.message || err));
+    return null;
+  }
 };
 
-  const exportCSV = (dataset) => {
-    let rows = [];
-    if (Array.isArray(dataset.rows) && dataset.rows.length) rows = dataset.rows;
-    else if (Array.isArray(dataset.features) && dataset.features.length) rows = dataset.features.map((f) => ({ ...(f.properties || {}) }));
-    else return null;
 
-    if (rows.length === 0) return null;
-    const keys = Array.from(rows.reduce((acc, r) => { Object.keys(r || {}).forEach(k => acc.add(k)); return acc; }, new Set()));
-    const csvLines = [ keys.join(','), ...rows.map(r => keys.map(k => {
-      const v = r[k]; if (v === null || v === undefined) return ''; const s = String(v).replace(/"/g, '""'); return s.includes(',') || s.includes('"') ? `"${s}"` : s;
-    }).join(',')) ];
 
-    const filename = `${(dataset.label || 'dataset').replace(/\s+/g, '_')}.${getFileExtension('csv')}`;
-    const blob = new Blob([csvLines.join('\n')], { type: 'text/csv' });
-    createAndDownload(filename, blob);
-    return filename;
+
+  // KML / KMZ export
+  const exportKMZ = async (dataset) => {
+    console.log('[ExportPanel] exportKMZ called', dataset);
+    let fc = null;
+    if (dataset.type === 'FeatureCollection') fc = dataset;
+    else if (dataset.features && Array.isArray(dataset.features)) fc = { type: 'FeatureCollection', features: dataset.features };
+    else if (dataset.geojson) fc = dataset.geojson;
+    else {
+      console.warn('[ExportPanel] exportKMZ could not find GeoJSON in dataset');
+      return null;
+    }
+
+    try {
+      const { blob, filename } = await geojsonToKMZ(fc, { nameField: 'name' });
+      createAndDownload(filename, blob);
+      return filename;
+    } catch (err) {
+      console.error('[ExportPanel] exportKMZ failed', err);
+      setDownloadError('KMZ export failed (see console).');
+      return null;
+    }
   };
+
 
   const handleExport = useCallback(() => {
   console.log('[ExportPanel] handleExport called', { selectedDataset, exportConfig });
@@ -189,42 +354,75 @@ export default function ExportPanel({
   const interval = setInterval(() => {
     setExportProgress(prev => {
       const next = Math.min(prev + 12, 100);
+
       if (next >= 100) {
         clearInterval(interval);
         console.log('[ExportPanel] Conversion progress reached 100%, starting export');
 
-        try {
-          if (exportConfig.format === 'geojson') {
-            const filename = exportGeoJSON(selectedDataset);
-            console.log('[ExportPanel] exportGeoJSON returned filename:', filename);
+        (async () => {
+          try {
+            // Always await the result; export functions can be sync or async.
+           if (exportConfig.format === 'geojson') {
+  const fc = await exportGeoJSON(selectedDataset); // fc returned, .geojson already downloaded
+  console.log('[ExportPanel] exportGeoJSON produced fc with', fc?.features?.length, 'features');
+}
+ else if (exportConfig.format === 'csv') {
+              const filename = await exportCSV(selectedDataset);
+              console.log('[ExportPanel] exportCSV returned filename:', filename);
+              } else if (exportConfig.format === 'kml') {
+              // generate KML text and download as .kml (no zip)
+              try {
+                const fc = selectedDataset.type === 'FeatureCollection'
+                  ? selectedDataset
+                  : (selectedDataset.features ? { type: 'FeatureCollection', features: selectedDataset.features } : selectedDataset.geojson);
+                if (!fc) throw new Error('No GeoJSON available for KML export');
+                const { kmlText, filename } = geojsonToKML(fc, { nameField: 'name' });
+                createAndDownload(filename, new Blob([kmlText], { type: 'application/vnd.google-earth.kml+xml' }));
+                console.log('[ExportPanel] KML exported:', filename);
+              } catch (err) {
+                console.error('[ExportPanel] KML export failed', err);
+                setDownloadError('KML export failed');
+              }
+            } else if (exportConfig.format === 'kmz') {
+              const filename = await Promise.resolve(exportKMZ(selectedDataset));
+              console.log('[ExportPanel] exportKMZ returned filename:', filename);
+            } else {
+              console.log('[ExportPanel] placeholder export for format:', exportConfig.format);
+              const filename = `${(selectedDataset.label || 'dataset').replace(/\s+/g, '_')}.${getFileExtension(exportConfig.format)}`;
+              const mime = (exportConfig.format === 'shapefile' || exportConfig.format === 'geopackage') ? 'application/zip' : 'application/octet-stream';
+              const placeholder = new Blob([`Export placeholder: ${filename}\nFormat: ${exportConfig.format}\nCRS: ${exportConfig.crs}`], { type: mime });
+              createAndDownload(filename, placeholder);
+            }
+          } catch (err) {
+            console.error('[ExportPanel] Export exception', err);
+            setDownloadError('Export failed (see console).');
+          } finally {
+            // finalize UI state
+            setTimeout(() => {
+              setExporting(false);
+              setExportSuccess(true);
+              setTimeout(() => setExportSuccess(false), 3000);
+            }, 300);
           }
-          else if (exportConfig.format === 'csv') {
-            console.log('[ExportPanel] exportCSV not yet instrumented for debug'); // can add logs there similarly
-          }
-          else {
-            console.log('[ExportPanel] placeholder export for format:', exportConfig.format);
-            const filename = `${(selectedDataset.label || 'dataset').replace(/\s+/g, '_')}.${getFileExtension(exportConfig.format)}`;
-            const mime = (exportConfig.format === 'shapefile' || exportConfig.format === 'geopackage') ? 'application/zip' : 'application/octet-stream';
-            const placeholder = new Blob([`Export placeholder: ${filename}\nFormat: ${exportConfig.format}\nCRS: ${exportConfig.crs}`], { type: mime });
-            createAndDownload(filename, placeholder);
-          }
-        } catch (err) {
-          console.error('[ExportPanel] Export exception', err);
-          setDownloadError('Export failed (see console).');
-        }
+        })();
 
-        setTimeout(() => {
-          setExporting(false);
-          setExportSuccess(true);
-          setTimeout(() => setExportSuccess(false), 3000);
-        }, 300);
+
+
+
+
+
+
+
+
 
         return 100;
       }
+
       return next;
     });
   }, 160);
 }, [selectedDataset, exportConfig]);
+
 
   const getFileExtension = (format) => {
     const map = { geojson: 'geojson', shapefile: 'zip', kml: 'kml', kmz: 'kmz', gpx: 'gpx', csv: 'csv', excel: 'xlsx', geotiff: 'tif', 'autocad-dxf': 'dxf', geopackage: 'gpkg', topojson: 'topojson', svg: 'svg', wkt: 'wkt' };
@@ -299,14 +497,15 @@ export default function ExportPanel({
           </div>
 
           {/* view / manual download */}
-          {lastBlobUrl && lastFilename && (
-            <div style={{ marginTop: 14, display: 'flex', gap: 8, alignItems: 'center' }}>
-              <button href={lastBlobUrl} download={lastFilename} className='btn'>Download</button>
-{/* style={{ padding: '8px 10px', borderRadius: 8, border: '1px solid #e5e7eb', background: '#fff', textDecoration: 'none', color: '#111' }} */}
-              <button onClick={() => { revokeLastBlob(); setDownloadError(null); }} title="Clear generated file" className='btn'>Clear</button>
-               {/* style={{ padding: '6px 8px', borderRadius: 8, border: '1px solid #efefef', background: '#fff', cursor: 'pointer', color: '#6b7280' }} */}
-            </div>
-          )}
+{lastBlobUrl && lastFilename && (
+  <div style={{ marginTop: 14, display: 'flex', gap: 8, alignItems: 'center' }}>
+    <a href={lastBlobUrl} download={lastFilename} className='btn' style={{ display: 'inline-block', textDecoration: 'none' }}>
+      Download
+    </a>
+    <button onClick={() => { revokeLastBlob(); setDownloadError(null); }} title="Clear generated file" className='btn'>Clear</button>
+  </div>
+)}
+
 
           <div style={{ marginTop: 16, color: '#6b7280', fontSize: 12 }}>
             <div><strong>Dataset:</strong> {selectedDataset?.label || 'None selected'}</div>
