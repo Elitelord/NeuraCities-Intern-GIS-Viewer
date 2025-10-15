@@ -12,7 +12,6 @@ export default function MapWorkspace({ datasets = [], active = null, styleOption
   const [internalStyle, setInternalStyle] = useState({});
   const [meta, setMeta] = useState({ hasPoints: false, hasLines: false, hasPolys: false });
 
-  // --- Event setup (for backward compatibility) ---
   useEffect(() => {
     const onReady = (e) => setInternalActive(e.detail);
     const onStyle = (e) => {
@@ -27,25 +26,15 @@ export default function MapWorkspace({ datasets = [], active = null, styleOption
         return copy;
       });
     };
-
-    // 🆕 Clear map handler
     const onClear = () => {
-      if (mapRef.current) {
-        if (layerRef.current) {
-          mapRef.current.removeLayer(layerRef.current);
-          layerRef.current = null;
-        }
-        if (connectLayerRef.current) {
-          mapRef.current.removeLayer(connectLayerRef.current);
-          connectLayerRef.current = null;
-        }
-      }
+      if (!mapRef.current) return;
+      if (layerRef.current) { mapRef.current.removeLayer(layerRef.current); layerRef.current = null; }
+      if (connectLayerRef.current) { mapRef.current.removeLayer(connectLayerRef.current); connectLayerRef.current = null; }
     };
 
     window.addEventListener("geojson:ready", onReady);
     window.addEventListener("geojson:style", onStyle);
     window.addEventListener("map:clear", onClear);
-
     return () => {
       window.removeEventListener("geojson:ready", onReady);
       window.removeEventListener("geojson:style", onStyle);
@@ -53,17 +42,15 @@ export default function MapWorkspace({ datasets = [], active = null, styleOption
     };
   }, []);
 
-  const effActive =
-    active && (active.geojson || active.features)
-      ? active.geojson
-        ? active
-        : { ...active, geojson: active.geojson || active }
-      : internalActive;
+  // ⬇️ IMPORTANT: if parent passed an active dataset, only use it if it has geojson.
+  // Otherwise return null (clear map) instead of falling back to internalActive.
+  const effActive = active
+    ? (active.geojson ? active : null)
+    : internalActive;
 
   const effStyle =
     styleOptions && Object.keys(styleOptions).length ? styleOptions : internalStyle;
 
-  // Init map
   useEffect(() => {
     if (mapRef.current) return;
     const map = L.map(mapEl.current, {
@@ -91,7 +78,6 @@ export default function MapWorkspace({ datasets = [], active = null, styleOption
     ).addTo(map);
   }, []);
 
-  // Helpers
   const n = (v, d) => (Number.isFinite(Number(v)) ? Number(v) : d);
   const clamp01 = (v, d) => Math.max(0, Math.min(1, n(v, d)));
 
@@ -100,19 +86,14 @@ export default function MapWorkspace({ datasets = [], active = null, styleOption
     for (const f of fc.features || []) {
       const type = f.geometry?.type;
       if (type === "Point") coords.push(f.geometry.coordinates);
-      else if (type === "MultiPoint")
-        for (const c of f.geometry.coordinates || []) coords.push(c);
+      else if (type === "MultiPoint") for (const c of f.geometry.coordinates || []) coords.push(c);
     }
     if (coords.length < 2) return null;
     return {
       type: "FeatureCollection",
       features: [
-        {
-          type: "Feature",
-          properties: { derived: "connected-points" },
-          geometry: { type: "LineString", coordinates: coords },
-        },
-      ],
+        { type: "Feature", properties: { derived: "connected-points" }, geometry: { type: "LineString", coordinates: coords } }
+      ]
     };
   };
 
@@ -120,38 +101,31 @@ export default function MapWorkspace({ datasets = [], active = null, styleOption
     const t = feature?.geometry?.type;
     if (t === "Point" || t === "MultiPoint") {
       const pc = effStyle.point?.color || "#0d9488";
-      return { color: pc, fillColor: pc, weight: 1, opacity: 1, fillOpacity: 0.9 };
+      return { stroke: true, color: pc, weight: 1, opacity: 1, fill: true, fillColor: pc, fillOpacity: 0.9 };
     }
     if (t === "LineString" || t === "MultiLineString") {
-      const show = effStyle.line?.show !== false;
+      const showLines = effStyle.line?.show !== false;
       const lc = effStyle.line?.color || "#0d9488";
       const lw = n(effStyle.line?.weight, 2);
-      return { color: lc, weight: show ? lw : 0, opacity: show ? 1 : 0 };
+      return { stroke: showLines, color: lc, weight: showLines ? lw : 0, opacity: showLines ? 1 : 0, fill: false, dashArray: null };
     }
     if (t === "Polygon" || t === "MultiPolygon") {
       const lc = effStyle.line?.color || "#0d9488";
       const lw = n(effStyle.line?.weight, 2);
       const fillCol = effStyle.poly?.fillColor || "#99f6e4";
       const fillOp = clamp01(effStyle.poly?.fillOpacity, 0.25);
-      return { color: lc, weight: lw, fillColor: fillCol, fillOpacity: fillOp };
+      return { stroke: true, color: lc, weight: lw, opacity: 1, fill: true, fillColor: fillCol, fillOpacity: fillOp, dashArray: null };
     }
     return { color: "#0d9488", weight: 2 };
   };
 
-  // Render / refresh
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
 
-    // clear previous
-    if (layerRef.current) {
-      map.removeLayer(layerRef.current);
-      layerRef.current = null;
-    }
-    if (connectLayerRef.current) {
-      map.removeLayer(connectLayerRef.current);
-      connectLayerRef.current = null;
-    }
+    // clear previous layers
+    if (layerRef.current) { map.removeLayer(layerRef.current); layerRef.current = null; }
+    if (connectLayerRef.current) { map.removeLayer(connectLayerRef.current); connectLayerRef.current = null; }
 
     const activeFC = effActive?.geojson || effActive;
     if (activeFC && activeFC.type === "FeatureCollection") {
@@ -160,14 +134,7 @@ export default function MapWorkspace({ datasets = [], active = null, styleOption
           pointToLayer: (feature, latlng) => {
             const pc = effStyle.point?.color || "#0d9488";
             const pr = n(effStyle.point?.radius, 6);
-            return L.circleMarker(latlng, {
-              color: pc,
-              fillColor: pc,
-              radius: pr,
-              weight: 1,
-              opacity: 1,
-              fillOpacity: 0.9,
-            });
+            return L.circleMarker(latlng, { color: pc, fillColor: pc, radius: pr, weight: 1, opacity: 1, fillOpacity: 0.9 });
           },
           style: styleForFeature,
         }).addTo(map);
@@ -179,6 +146,7 @@ export default function MapWorkspace({ datasets = [], active = null, styleOption
           if (derived) {
             const c = L.geoJSON(derived, {
               style: () => ({
+                stroke: true,
                 color: effStyle.line?.color || "#ef4444",
                 weight: n(effStyle.line?.weight, 2),
                 opacity: 1,

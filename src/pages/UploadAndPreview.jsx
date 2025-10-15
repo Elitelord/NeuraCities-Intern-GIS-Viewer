@@ -5,7 +5,8 @@ import UploadDropzone from "../components/UploadDropzone";
 import PreviewRouter from "../components/PreviewRouter";
 import ExportPanel from "../components/ExportPanel";
 
-const keyFor = (d) => (d ? `${d.label}::${d.kind}` : null);
+const uid = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+const keyFor = (d) => (d ? d._id : null);
 
 export default function UploadAndPreview() {
   const [datasets, setDatasets] = useState([]);
@@ -13,74 +14,80 @@ export default function UploadAndPreview() {
   const [isExportOpen, setIsExportOpen] = useState(false);
   const [isAddOpen, setIsAddOpen] = useState(false);
 
-  // NEW: per-dataset style state (scoped by dataset key)
-  const [styleMap, setStyleMap] = useState({});
+  // Per-dataset style + parsed FeatureCollection
+  const [styleMap, setStyleMap] = useState({}); // id -> style
+  const [fcMap, setFcMap] = useState({});       // id -> FeatureCollection
   const activeKey = useMemo(() => keyFor(active), [active]);
 
-  // pick first dataset once uploaded
+  // Pick first dataset once uploaded
   useEffect(() => {
     if (datasets.length && !active) setActive(datasets[0]);
   }, [datasets, active]);
 
   const hasData = datasets.length > 0;
 
-  // Merge new datasets into existing (de-dupe by label+kind)
+  // Append new datasets (assign stable _id)
   const appendDatasets = (newOnes) => {
     if (!Array.isArray(newOnes) || !newOnes.length) return;
 
+    // assign ids
+    const withIds = newOnes.map((d) => ({ ...d, _id: d._id || uid() }));
+
     setDatasets((prev) => {
-      const byKey = new Map(prev.map((d) => [keyFor(d), d]));
-      for (const d of newOnes) byKey.set(keyFor(d), d); // replace if same key
+      // de-dupe by label+kind, but keep ids for new ones
+      const byKey = new Map(prev.map((d) => [`${d.label}::${d.kind}`, d]));
+      for (const d of withIds) byKey.set(`${d.label}::${d.kind}`, d);
       return Array.from(byKey.values());
     });
 
-    // ensure style entry exists for new ones so they don't inherit another dataset's style
+    // seed empty style buckets for new ids
     setStyleMap((prev) => {
       const copy = { ...prev };
-      for (const d of newOnes) {
-        const k = keyFor(d);
-        if (!copy[k]) copy[k] = {}; // start blank
-      }
+      for (const d of withIds) if (!copy[d._id]) copy[d._id] = {};
       return copy;
     });
 
-    // Auto-select the last uploaded dataset so the preview opens
-    const latest = newOnes[newOnes.length - 1];
+    // auto-select last uploaded dataset
+    const latest = withIds[withIds.length - 1];
     if (latest) setActive(latest);
 
     setIsAddOpen(false);
   };
 
   const removeDataset = (toRemove) => {
-    const removeKey = keyFor(toRemove);
+    const id = keyFor(toRemove);
     setDatasets((prev) => {
-      const filtered = prev.filter((d) => keyFor(d) !== removeKey);
-      if (active && keyFor(active) === removeKey) {
-        setActive(filtered[0] || null);
-        if (typeof window !== "undefined") {
-          window.dispatchEvent(new CustomEvent("preview:closed", { detail: { label: toRemove.label } }));
-        }
-      }
+      const filtered = prev.filter((d) => d._id !== id);
 
-      if (filtered.length === 0 && typeof window !== "undefined") {
-        window.dispatchEvent(new Event("map:clear"));
+      // if removing active, select next or clear and clear map
+      if (active && active._id === id) {
+        const next = filtered[0] || null;
+        setActive(next);
+        if (!next && typeof window !== "undefined") {
+          window.dispatchEvent(new Event("map:clear"));
+        }
       }
       return filtered;
     });
-    // drop its style bucket
+
+    // drop buckets
     setStyleMap((prev) => {
       const copy = { ...prev };
-      delete copy[removeKey];
+      delete copy[id];
+      return copy;
+    });
+    setFcMap((prev) => {
+      const copy = { ...prev };
+      delete copy[id];
       return copy;
     });
   };
 
-  // Listen to global style events and write them into the ACTIVE dataset’s style only
+  // Scope style events to ACTIVE dataset only
   useEffect(() => {
     const onStyle = (e) => {
-      if (!activeKey) return;
       const { path, value } = e.detail || {};
-      if (!path) return;
+      if (!path || !activeKey) return;
       setStyleMap((prev) => {
         const next = { ...prev };
         const bucket = { ...(next[activeKey] || {}) };
@@ -95,36 +102,35 @@ export default function UploadAndPreview() {
     return () => window.removeEventListener("geojson:style", onStyle);
   }, [activeKey]);
 
-  // Style to pass to the map (per-dataset)
+  // What to send to the map
   const activeStyle = (activeKey && styleMap[activeKey]) || {};
+  const activeGeoJSON = activeKey ? fcMap[activeKey] : null;
+  const activeForMap = active && activeGeoJSON ? { ...active, geojson: activeGeoJSON } : null;
 
   return (
     <div className="workspace">
-      {/* Background map */}
       <div className="map-root">
-        <MapWorkspace datasets={datasets} active={active} styleOptions={activeStyle} />
+        <MapWorkspace active={activeForMap} styleOptions={activeStyle} />
       </div>
 
-      {/* Initial upload overlay (visible until we have datasets) */}
       {!hasData && (
         <div className="upload-overlay">
           <div className="upload-card">
-            <UploadDropzone onDatasetsReady={setDatasets} />
+            <UploadDropzone onDatasetsReady={appendDatasets} />
           </div>
         </div>
       )}
 
-      {/* Mini toolbar (left) once data is present */}
       {hasData && (
         <div className="mini-toolbar">
           <div className="toolbar-section">
             <div className="toolbar-title">Datasets</div>
             <div className="toolbar-list">
-              {datasets.map((d, i) => {
-                const isActive = keyFor(active) === keyFor(d);
+              {datasets.map((d) => {
+                const isActive = activeKey === d._id;
                 return (
                   <div
-                    key={`${d.label}::${d.kind}::${i}`}
+                    key={d._id}
                     className={"toolbar-item-row " + (isActive ? "is-active" : "")}
                     title={`${d.label} — ${d.kind}`}
                   >
@@ -151,21 +157,23 @@ export default function UploadAndPreview() {
           <div className="toolbar-section">
             <div className="toolbar-title">Actions</div>
             <div style={{ display: "grid", gap: 8 }}>
-              <button className="btn" onClick={() => setIsAddOpen(true)}>
-                Add data…
-              </button>
-              <button className="btn" onClick={() => setIsExportOpen(true)}>
-                Export…
-              </button>
+              <button className="btn" onClick={() => setIsAddOpen(true)}>Add data…</button>
+              <button className="btn" onClick={() => setIsExportOpen(true)}>Export…</button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Preview (header + style are rendered by the preview component) */}
-      {hasData && active && <PreviewRouter dataset={active} />}
+      {/* Preview: parses to FC and returns with the dataset id */}
+      {hasData && active && (
+        <PreviewRouter
+          dataset={active}
+          onGeoJSONReady={({ datasetId, geojson }) => {
+            setFcMap((prev) => ({ ...prev, [datasetId]: geojson }));
+          }}
+        />
+      )}
 
-      {/* Slide-over export */}
       <ExportPanel
         datasets={datasets}
         selectedDataset={active}
@@ -174,27 +182,16 @@ export default function UploadAndPreview() {
         onClose={() => setIsExportOpen(false)}
       />
 
-      {/* Add-data overlay */}
       {isAddOpen && (
         <div className="upload-overlay" aria-label="Add dataset overlay">
           <div className="upload-card">
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                marginBottom: 8,
-              }}
-            >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
               <div className="toolbar-title">Add dataset</div>
-              <button className="btn" onClick={() => setIsAddOpen(false)}>
-                Close
-              </button>
+              <button className="btn" onClick={() => setIsAddOpen(false)}>Close</button>
             </div>
             <UploadDropzone onDatasetsReady={appendDatasets} />
             <div style={{ marginTop: 8, fontSize: 12, color: "#475569" }}>
-              Tip: you can upload another file at any time. For shapefiles, drop the
-              <code> .shp .shx .dbf .prj</code> together.
+              Tip: drop <code>.shp .shx .dbf .prj</code> together for shapefiles.
             </div>
           </div>
         </div>
