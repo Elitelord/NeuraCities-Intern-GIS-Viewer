@@ -4,6 +4,8 @@ import ReactDOM from 'react-dom';
 import JSZip from 'jszip'; // if not already imported
 import { csvToGeoJSON, kmzToGeoJSON,  gpxToGeoJSON} from './converters/fromFiles';
 import { geojsonToCSV, geojsonToKMZ, geojsonToKML, geojsonToGPX } from './converters/geojsonConverters';
+import shp from 'shpjs';
+
 
 /**
  * ExportPanel (robust download)
@@ -145,6 +147,81 @@ export default function ExportPanel({
   
     throw new Error('No GeoJSON available for KML export');
   }
+
+  /** Shapefile dataset -> GeoJSON FeatureCollection (zip OR loose .shp + .dbf) */
+async function shapefileDatasetToGeoJSON(dataset) {
+  if (!dataset?.files?.length) throw new Error('No files on dataset');
+
+  // Case A: single .zip containing the shapefile
+  const zip = dataset.files.find(f => /\.zip$/i.test(f.name));
+  if (zip) {
+    const ab = await zip.arrayBuffer();
+    const out = await shp(ab); // shpjs auto-detects zip buffers
+    if (out?.type === 'FeatureCollection') return out;
+    if (out && typeof out === 'object') {
+      // shpjs may return { layerName: FeatureCollection, ... }
+      const all = [];
+      for (const k of Object.keys(out)) {
+        const fc = out[k];
+        if (fc?.type === 'FeatureCollection' && Array.isArray(fc.features)) {
+          all.push(...fc.features);
+        }
+      }
+      if (all.length) return { type: 'FeatureCollection', features: all };
+    }
+    throw new Error('Could not parse shapefile zip.');
+  }
+
+  // Case B: loose .shp + .dbf (optional .shx/.prj)
+  const shpFile = dataset.files.find(f => /\.shp$/i.test(f.name));
+  const dbfFile = dataset.files.find(f => /\.dbf$/i.test(f.name));
+  if (shpFile && dbfFile) {
+    const [shpBuf, dbfBuf] = await Promise.all([shpFile.arrayBuffer(), dbfFile.arrayBuffer()]);
+    const geoms = await shp.parseShp(shpBuf);
+    const recs  = await shp.parseDbf(dbfBuf);
+    const features = (geoms || []).map((g, i) => ({
+      type: 'Feature',
+      geometry: g,
+      properties: recs?.[i] || {}
+    }));
+    if (!features.length) throw new Error('No features parsed from .shp/.dbf');
+    return { type: 'FeatureCollection', features };
+  }
+
+  throw new Error('Provide a .zip, or both .shp and .dbf.');
+}
+
+/** Try multiple places to get a FeatureCollection for export */
+async function resolveGeoJSONForExport(dataset) {
+  // 1) if the preview already attached a FC
+  if (dataset?.geojson?.type === 'FeatureCollection') return dataset.geojson;
+
+  // 2) if the preview cached by label
+  if (typeof window !== 'undefined' && dataset?.label) {
+    const cache = window.__GEOJSON_CACHE__;
+    if (cache && cache[dataset.label]?.type === 'FeatureCollection') return cache[dataset.label];
+  }
+
+  // 3) parse raw .geojson/.json file if that’s what was uploaded
+  const file = dataset?.files?.[0];
+  if (file && /\.(geo)?json$/i.test(file.name)) {
+    const text = await file.text();
+    const j = JSON.parse(text);
+    if (j?.type === 'FeatureCollection') return j;
+    if (j?.type === 'Feature') return { type: 'FeatureCollection', features: [j] };
+    if (j?.type) return { type: 'FeatureCollection', features: [{ type: 'Feature', properties: {}, geometry: j }] };
+    throw new Error('JSON file is not valid GeoJSON.');
+  }
+
+  // 4) shapefile datasets (zip OR loose set)
+  if (dataset?.kind === 'shapefile') {
+    return await shapefileDatasetToGeoJSON(dataset);
+  }
+
+  // (other kinds keep using your existing logic)
+  throw new Error('No GeoJSON available for export for this dataset.');
+}
+
 
   
 
@@ -450,6 +527,22 @@ export default function ExportPanel({
             try {
               // Always await the result; export functions can be sync or async.
               if (exportConfig.format === 'geojson') {
+                if (selectedDataset?.kind === 'shapefile') {
+                  try {
+                    const ds = selectedDataset;
+                    const fc = await shapefileDatasetToGeoJSON(ds);
+                    window.__DEBUG_LAST_GEOJSON__ = fc;
+                    console.info('[Export] Shapefile FC ready — features:', fc?.features?.length ?? 0);
+                    const filename = buildFilename(getFileExtension('geojson'));
+                    const blob = new Blob([JSON.stringify(fc, null, 2)], { type: 'application/geo+json;charset=utf-8' });
+                    createAndDownload(filename, blob);
+                    return;
+                  } catch (err) {
+                    console.error('[ExportPanel] shapefileDatasetToGeoJSON failed', err);
+                    setDownloadError('Shapefile → GeoJSON conversion failed: ' + (err.message || err));
+                    return;
+                  }
+                }
                 const fc = await exportGeoJSON(selectedDataset); // fc returned, .geojson already downloaded
                 console.log('[ExportPanel] exportGeoJSON produced fc with', fc?.features?.length, 'features');
               }
