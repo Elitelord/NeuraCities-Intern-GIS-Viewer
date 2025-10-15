@@ -206,8 +206,8 @@ export function geojsonToKML(fc, opts = {}) {
       if (!geomXml) return;
       const name = (f.properties && (f.properties[nameField] ?? f.properties.title)) || `feature-${i+1}`;
       const desc = f.properties
-        ? `<description><![CDATA<pre>${esc(JSON.stringify(f.properties, null, 2))}</pre>]]></description>`
-        : '';
+  ? `<description><![CDATA[<pre>${JSON.stringify(f.properties, null, 2)}</pre>]]></description>`
+  : '';
       placemarks.push(`<Placemark><name>${esc(name)}</name>${desc}${geomXml}</Placemark>`);
     } catch {
       /* skip bad feature */

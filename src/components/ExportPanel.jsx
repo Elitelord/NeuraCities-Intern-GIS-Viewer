@@ -547,7 +547,8 @@ async function resolveGeoJSONForExport(dataset) {
                 console.log('[ExportPanel] exportGeoJSON produced fc with', fc?.features?.length, 'features');
               }
               else if (exportConfig.format === 'csv') {
-                const filename = await exportCSV(selectedDataset);
+                const fc = await resolveGeoJSONForExport(selectedDataset)
+                const filename = await exportCSV(fc);
                 console.log('[ExportPanel] exportCSV returned filename:', filename);
               } else if (exportConfig.format === 'kml') {
                 try {
