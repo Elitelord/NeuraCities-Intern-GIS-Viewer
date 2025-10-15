@@ -227,7 +227,163 @@ export function geojsonToKML(fc, opts = {}) {
   return { kmlText: kml, filename };
 }
 
+export function geojsonToGPX(fc, opts = {}) {
+  const { nameField = 'name', includeProperties = true } = opts;
 
+  if (!fc || fc.type !== 'FeatureCollection' || !Array.isArray(fc.features)) {
+    throw new Error('Expected a GeoJSON FeatureCollection');
+  }
+
+  const esc = (s) => (s == null ? '' : String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'));
+
+  // helper: format lat/lon (GPX uses lat/lon attributes)
+  const fmtCoord = (c) => (Number.isFinite(Number(c)) ? Number(c) : '');
+
+  // Build wpt entries and trk entries
+  const wpts = [];
+  const trks = [];
+
+  function propertiesDesc(props) {
+    if (!props) return '';
+    try {
+      if (includeProperties) return `<desc><![CDATA[${JSON.stringify(props, null, 2)}]]></desc>`;
+    } catch (e) {
+      return `<desc>${esc(String(props))}</desc>`;
+    }
+    return '';
+  }
+
+  let trackCount = 0;
+  fc.features.forEach((f, idx) => {
+    if (!f || !f.geometry) return;
+    const p = f.properties || {};
+    const title = (p[nameField] ?? p.title ?? `feature-${idx+1}`);
+    const nameXml = `<name>${esc(title)}</name>`;
+    const descXml = propertiesDesc(p);
+
+    const geom = f.geometry;
+    const type = geom.type;
+
+    if (type === 'Point') {
+      const [lng, lat] = geom.coordinates || [];
+      if (lat == null || lng == null) return;
+      wpts.push(`<wpt lat="${fmtCoord(lat)}" lon="${fmtCoord(lng)}">${nameXml}${descXml}</wpt>`);
+      return;
+    }
+
+    if (type === 'MultiPoint') {
+      (geom.coordinates || []).forEach((c, i) => {
+        const [lng, lat] = c || [];
+        if (lat == null || lng == null) return;
+        wpts.push(`<wpt lat="${fmtCoord(lat)}" lon="${fmtCoord(lng)}"><name>${esc(`${title}-${i+1}`)}</name>${descXml}</wpt>`);
+      });
+      return;
+    }
+
+    // Lines -> tracks
+    const coordsToTrkseg = (coords) => {
+      // coords is array of [lng,lat] pairs
+      const pts = (coords || []).map(c => {
+        if (!Array.isArray(c)) return '';
+        const [lng, lat] = c;
+        if (lat == null || lng == null) return '';
+        return `<trkpt lat="${fmtCoord(lat)}" lon="${fmtCoord(lng)}"></trkpt>`;
+      }).filter(Boolean);
+      if (!pts.length) return '';
+      return `<trkseg>${pts.join('')}</trkseg>`;
+    };
+
+    if (type === 'LineString') {
+      const seg = coordsToTrkseg(geom.coordinates || []);
+      if (seg) {
+        trackCount++;
+        trks.push(`<trk><name>${esc(title)}</name>${descXml}${seg}</trk>`);
+      }
+      return;
+    }
+
+    if (type === 'MultiLineString') {
+      const segs = (geom.coordinates || []).map(coordsToTrkseg).filter(Boolean);
+      if (segs.length) {
+        trackCount++;
+        trks.push(`<trk><name>${esc(title)}</name>${descXml}${segs.join('')}</trk>`);
+      }
+      return;
+    }
+
+    if (type === 'Polygon') {
+      // export outer ring as a single track
+      const rings = geom.coordinates || [];
+      if (rings.length) {
+        const outer = rings[0] || [];
+        const seg = coordsToTrkseg(outer);
+        if (seg) {
+          trackCount++;
+          trks.push(`<trk><name>${esc(title)}</name>${descXml}${seg}</trk>`);
+        }
+      }
+      return;
+    }
+
+    if (type === 'MultiPolygon') {
+      const polys = geom.coordinates || [];
+      const polySegs = [];
+      polys.forEach(poly => {
+        const outer = (poly && poly[0]) || [];
+        const seg = coordsToTrkseg(outer);
+        if (seg) polySegs.push(seg);
+      });
+      if (polySegs.length) {
+        trackCount++;
+        trks.push(`<trk><name>${esc(title)}</name>${descXml}${polySegs.join('')}</trk>`);
+      }
+      return;
+    }
+
+    if (type === 'GeometryCollection') {
+      (geom.geometries || []).forEach((g, subi) => {
+        if (!g) return;
+        const fakeFeature = { type: 'Feature', geometry: g, properties: p };
+        // recursive-ish: process simple types inline
+        if (g.type === 'Point') {
+          const [lng, lat] = g.coordinates || [];
+          if (lat != null && lng != null) wpts.push(`<wpt lat="${fmtCoord(lat)}" lon="${fmtCoord(lng)}"><name>${esc(`${title}-${subi+1}`)}</name>${descXml}</wpt>`);
+        } else {
+          // fallback: treat like LineString if possible
+          if (Array.isArray(g.coordinates) && typeof g.coordinates[0][0] === 'number') {
+            const seg = coordsToTrkseg(g.coordinates);
+            if (seg) {
+              trackCount++;
+              trks.push(`<trk><name>${esc(`${title}-${subi+1}`)}</name>${descXml}${seg}</trk>`);
+            }
+          }
+        }
+      });
+      return;
+    }
+
+    // unknown geometry: skip
+  });
+
+  const docName = (fc.metadata && fc.metadata.name) ? fc.metadata.name : 'Exported';
+  const now = new Date().toISOString();
+
+  const header = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="NeuraCities" xmlns="http://www.topografix.com/GPX/1/1">\n  <metadata>\n    <name>${esc(docName)}</name>\n    <desc>Converted from GeoJSON</desc>\n    <time>${now}</time>\n  </metadata>\n`;
+
+  const body = [
+    // waypoints first
+    wpts.join('\n'),
+    // then tracks
+    trks.join('\n')
+  ].filter(Boolean).join('\n');
+
+  const footer = '\n</gpx>\n';
+
+  const gpxText = header + body + footer;
+  const filename = `${docName.replace(/\s+/g, '_')}.gpx`;
+
+  return { gpxText, filename };
+}
 
 /**
  * Convert GeoJSON -> KMZ (zip containing doc.kml)

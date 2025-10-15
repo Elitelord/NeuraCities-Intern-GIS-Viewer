@@ -2,8 +2,8 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import ReactDOM from 'react-dom';
 import JSZip from 'jszip'; // if not already imported
-import { csvToGeoJSON, kmzToGeoJSON} from './converters/fromFiles';
-import { geojsonToCSV, geojsonToKMZ, geojsonToKML } from './converters/geojsonConverters';
+import { csvToGeoJSON, kmzToGeoJSON,  gpxToGeoJSON} from './converters/fromFiles';
+import { geojsonToCSV, geojsonToKMZ, geojsonToKML, geojsonToGPX } from './converters/geojsonConverters';
 
 /**
  * ExportPanel (robust download)
@@ -110,7 +110,7 @@ export default function ExportPanel({
     return `${FIXED_PREFIX}${middle}.${ext}`;
   };
 
-  async function resolveGeoJSONForExport(dataset) {
+    async function resolveGeoJSONForExport(dataset) {
     // 1) already attached by previews?
     if (dataset?.geojson?.type === 'FeatureCollection') return dataset.geojson;
   
@@ -123,6 +123,17 @@ export default function ExportPanel({
       if (j?.type === 'Feature') return { type: 'FeatureCollection', features: [j] };
       if (j?.type) return { type: 'FeatureCollection', features: [{ type: 'Feature', properties: {}, geometry: j }] };
     }
+
+    // NEW: if the uploaded file is GPX, convert it on-demand
+    if (f && /\.gpx$/i.test(f.name)) {
+      try {
+        const gj = await gpxToGeoJSON(f);
+        if (gj && gj.type === 'FeatureCollection') return gj;
+      } catch (err) {
+        // throw a helpful error to be handled by caller
+        throw new Error('GPX → GeoJSON conversion failed: ' + (err.message || err));
+      }
+    }
   
     // 3) last-resort: preview cache (we set this in step 2 below)
     if (typeof window !== 'undefined') {
@@ -134,6 +145,7 @@ export default function ExportPanel({
   
     throw new Error('No GeoJSON available for KML export');
   }
+
   
 
   /**
@@ -267,7 +279,17 @@ export default function ExportPanel({
             setDownloadError('CSV → GeoJSON conversion failed: ' + (err.message || err));
             return null;
           }
-        } else {
+        } 
+         else if (dataset.kind === 'gpx' || name.endsWith('.kmz')) {
+          try {
+            fc = await gpxToGeoJSON(file);
+          } catch (err) {
+            console.error('[ExportPanel] gpxToGeoJSON failed', err);
+            setDownloadError('GPX → GeoJSON conversion failed: ' + (err.message || err));
+            return null;
+          }
+        }
+        else {
           console.warn('[ExportPanel] No on-demand converter for dataset kind:', dataset.kind, file && file.name);
           setDownloadError('No on-demand converter available for this file type.');
           return null;
@@ -450,7 +472,21 @@ export default function ExportPanel({
               else if (exportConfig.format === 'kmz') {
                 const filename = await Promise.resolve(exportKMZ(selectedDataset));
                 console.log('[ExportPanel] exportKMZ returned filename:', filename);
-              } else {
+              } else if (exportConfig.format === 'gpx') {
+                try {
+                  const fc = await resolveGeoJSONForExport(selectedDataset);
+                  const { gpxText, filename } = geojsonToGPX(fc, { nameField: 'name', includeProperties: true });
+                  const blob = new Blob([gpxText], { type: 'application/gpx+xml;charset=utf-8' });
+                  const outName = buildFilename('gpx') || filename;
+                  createAndDownload(outName, blob);
+                  console.log('[ExportPanel] GPX exported:', outName);
+                } catch (err) {
+                  console.error('[ExportPanel] GPX export failed', err);
+                  setDownloadError('GPX export failed: ' + (err?.message || err));
+                }
+              }
+ 
+              else {
                 console.log('[ExportPanel] placeholder export for format:', exportConfig.format);
                 const ext = getFileExtension(exportConfig.format);
                 const filename = buildFilename(ext);
@@ -507,9 +543,15 @@ export default function ExportPanel({
             <div>
               <label style={{ display: 'block', fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Output Format</label>
               <select value={exportConfig.format} onChange={(e) => setExportConfig({ ...exportConfig, format: e.target.value })} style={{ width: '100%', padding: '10px', borderRadius: 8, border: '1px solid #e5e7eb' }}>
-                <optgroup label="Vector"><option value="geojson">GeoJSON (.geojson)</option><option value="shapefile">Shapefile (.zip)</option><option value="kml">KML (.kml)</option></optgroup>
+                <optgroup label="Vector">
++                  <option value="geojson">GeoJSON (.geojson)</option>
++                  <option value="shapefile">Shapefile (.zip)</option>
++                  <option value="kml">KML (.kml)</option>
++                  <option value="gpx">GPX (.gpx)</option>
++                </optgroup>
                 <optgroup label="Tabular"><option value="csv">CSV (.csv)</option><option value="excel">Excel (.xlsx)</option></optgroup>
                 <optgroup label="Raster/CAD"><option value="geotiff">GeoTIFF (.tif)</option><option value="autocad-dxf">DXF (.dxf)</option></optgroup>
+                
               </select>
             </div>
 
