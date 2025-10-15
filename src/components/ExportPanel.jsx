@@ -2,8 +2,8 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import ReactDOM from 'react-dom';
 import JSZip from 'jszip'; // if not already imported
-import { csvToGeoJSON, kmzToGeoJSON,  gpxToGeoJSON} from './converters/fromFiles';
-import { geojsonToCSV, geojsonToKMZ, geojsonToKML, geojsonToGPX } from './converters/geojsonConverters';
+import { csvToGeoJSON, kmzToGeoJSON,  gpxToGeoJSON, shapefileToGeoJSON} from './converters/fromFiles';
+import { geojsonToCSV, geojsonToKMZ, geojsonToKML, geojsonToGPX, geojsonToShapefile } from './converters/geojsonConverters';
 import shp from 'shpjs';
 
 
@@ -563,6 +563,17 @@ async function resolveGeoJSONForExport(dataset) {
                   setDownloadError('KML export failed: ' + (err?.message || err));
                 }
               }
+              else if (exportConfig.format === 'shapefile') {
+          try {
+            const fc = await resolveGeoJSONForExport(selectedDataset)
+    const maybe = await geojsonToShapefile(fc);
+    // if function returned a promise that resolved to object, 'maybe' will be {blob, filename}
+    const { blob, filename: returnedName } = await Promise.resolve(maybe);
+    createAndDownload(buildFilename('zip'), blob);
+  } catch (err) {
+    setDownloadError('Shapefile export failed: ' + (err?.message || err));
+  }
+}
               else if (exportConfig.format === 'kmz') {
                 const filename = await Promise.resolve(exportKMZ(selectedDataset));
                 console.log('[ExportPanel] exportKMZ returned filename:', filename);

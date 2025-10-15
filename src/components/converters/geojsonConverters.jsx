@@ -1,5 +1,6 @@
 // converters/geojsonConverters.js
 import JSZip from 'jszip';
+// import shpwrite from 'shp-write';
 
 /**
  * Escape CSV cell
@@ -11,7 +12,41 @@ function escapeCsvCell(v) {
   if (s.includes(',') || s.includes('\n') || s.includes('\r')) return `"${s}"`;
   return s;
 }
+export function geojsonToShapefile(fc, opts = {}) {
+  if (!fc || fc.type !== 'FeatureCollection' || !Array.isArray(fc.features)) {
+    throw new Error('Expected a GeoJSON FeatureCollection');
+  }
 
+  // Normalize properties: shp-write expects an object: {type: 'FeatureCollection', features: [...]}
+  try {
+    // shp-write expects a plain GeoJSON object. Its zip() function returns a JSZip instance or a Blob depending on version.
+    // The simplest approach: call shpwrite.zip(fc) and coerce to Blob if necessary.
+    const zipData = shpwrite.zip(fc); // usually returns a Blob (browser) or Uint8Array
+    let blob;
+    if (zipData instanceof Blob) {
+      blob = zipData;
+    } else if (zipData instanceof ArrayBuffer || ArrayBuffer.isView(zipData)) {
+      blob = new Blob([zipData], { type: 'application/zip' });
+    } else {
+      // If shp-write returned a JSZip object, generate a blob via generateAsync
+      if (zipData && typeof zipData.generateAsync === 'function') {
+        // zipData is a JSZip instance
+        // generateAsync returns a promise; return a promise-based signature
+        return zipData.generateAsync({ type: 'blob', compression: 'DEFLATE' }).then((b) => {
+          const filename = `${(fc.metadata && fc.metadata.name) ? fc.metadata.name.replace(/\s+/g, '_') : 'export'}.zip`;
+          return { blob: b, filename };
+        });
+      }
+      // fallback: try JSON-stringify the returned object
+      blob = new Blob([JSON.stringify(zipData)], { type: 'application/zip' });
+    }
+
+    const filename = `${(fc.metadata && fc.metadata.name) ? fc.metadata.name.replace(/\s+/g, '_') : 'export'}.zip`;
+    return { blob, filename };
+  } catch (err) {
+    throw new Error('Failed to create shapefile: ' + (err.message || err));
+  }
+}
 /**
  * Convert GeoJSON FeatureCollection -> CSV Blob
  * options:

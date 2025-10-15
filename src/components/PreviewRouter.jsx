@@ -10,6 +10,7 @@ import {
   kmzToGeoJSON,
   gpxToGeoJSON,
   csvToGeoJSON,
+  shapefileToGeoJSON,
   // (you can import shapefileToGeoJSON if you ever want to convert in-router)
 } from './converters/fromFiles';
 
@@ -116,7 +117,10 @@ export default function PreviewRouter({ dataset, onGeoJSONReady, onStyleChange }
           prepareFromGeoJSON(fc);
           return;
         }
-
+        if (dataset.kind === 'shapefile' || dataset.kind === 'zip' && keyFile) {
+          const fx = await shapefileToGeoJSON([keyFile]);
+          prepareFromGeoJSON(fx)
+        }
         // 7) Shapefile → keep dedicated preview (progress, messages)
         // handled below in switch()
 

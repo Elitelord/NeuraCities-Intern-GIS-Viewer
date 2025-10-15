@@ -2,10 +2,50 @@
 import JSZip from 'jszip';
 import * as toGeoJSON from '@tmcw/togeojson';
 import Papa from 'papaparse';
+import shp from 'shpjs';
 
 
 
+// ----------------------
+// Shapefile -> GeoJSON
+// Accepts either:
+//  - a .zip File containing .shp/.shx/.dbf etc.
+//  - a single .shp/.dbf File (will be packaged into a zip client-side if needed)
+// Returns: FeatureCollection { type: 'FeatureCollection', features: [...] , metadata: { name: ... } }
+export async function shapefileToGeoJSON(fileOrFiles) {
+  if (!fileOrFiles) throw new Error('No shapefile provided');
 
+  // Accept either a single File object (zip or .shp), or an array-like of files (e.g. multiple parts uploaded)
+  const files = Array.isArray(fileOrFiles) ? fileOrFiles : [fileOrFiles];
+
+  // Helper to find if one of the files is a zip
+  const zipFile = files.find(f => /\.zip$/i.test(f.name));
+  if (zipFile) {
+    const buffer = await zipFile.arrayBuffer();
+    const geojson = await shp(buffer); // shpjs will parse zip ArrayBuffer -> GeoJSON
+    const features = (geojson?.features || []).filter(f => f?.geometry?.coordinates);
+    if (!features.length) throw new Error('No features found in shapefile ZIP');
+    return { type: 'FeatureCollection', features, metadata: { name: zipFile.name.replace(/\.zip$/i, '') } };
+  }
+
+  // If user uploaded multiple component files (shp, dbf, shx) or a single shapefile part,
+  // package them into a zip using JSZip and then parse with shpjs.
+  const zip = new JSZip();
+  // Add all provided files into the zip with their original names.
+  for (const f of files) {
+    // only add recognized shapefile-related extensions
+    const name = f.name || `file_${Math.random().toString(36).slice(2,8)}`;
+    zip.file(name, await f.arrayBuffer());
+  }
+
+  const zipped = await zip.generateAsync({ type: 'arraybuffer', compression: 'DEFLATE' });
+  const geojson = await shp(zipped);
+  const features = (geojson?.features || []).filter(f => f?.geometry?.coordinates);
+  if (!features.length) throw new Error('No features found in shapefile archive');
+  // choose a base name from the first file
+  const baseName = (files[0]?.name || 'shapefile').replace(/\.(shp|dbf|shx|prj|cpg|zip)$/i, '');
+  return { type: 'FeatureCollection', features, metadata: { name: baseName } };
+}
 
 export async function gpxToGeoJSON(file) {
   if (!file) throw new Error('No GPX file provided');
