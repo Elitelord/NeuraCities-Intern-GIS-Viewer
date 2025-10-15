@@ -16,48 +16,62 @@ const ShapefilePreview = ({ files, onClose, onConvert }) => {
       setInfo('Parsing shapefile...');
 
       try {
-        // Many shapefile UIs upload either a zipped shapefile or separate .shp/.dbf/.shx files.
-        // Use shpjs convenience function which accepts an ArrayBuffer of a zip or file list.
         const file = files?.[0];
         if (!file) throw new Error('No file provided');
 
-        // If the user uploaded a .zip containing the shapefile
+        // ✅ ZIP path: use ArrayBuffer directly (NOT Uint8Array)
         if (file.name.toLowerCase().endsWith('.zip')) {
           const buffer = await file.arrayBuffer();
-          const geojson = await shp.parseZip(new Uint8Array(buffer));
-          if (!geojson || !Array.isArray(geojson.features) || geojson.features.length === 0) {
-            throw new Error('No features found in zipped shapefile');
+
+          // You can use either helper; both take ArrayBuffer:
+          // const geojson = await shp.parseZip(buffer);
+          const geojson = await shp(buffer);
+
+          // shpjs may return a FeatureCollection, or an object of layers.
+          let fc;
+          if (geojson?.type === 'FeatureCollection') {
+            fc = geojson;
+          } else if (geojson && typeof geojson === 'object' && !Array.isArray(geojson)) {
+            // multi-layer: merge into one FC
+            const all = [];
+            for (const k of Object.keys(geojson)) {
+              const layer = geojson[k];
+              if (layer?.type === 'FeatureCollection' && Array.isArray(layer.features)) {
+                all.push(...layer.features);
+              }
+            }
+            fc = { type: 'FeatureCollection', features: all };
+          } else {
+            throw new Error('Unrecognized shapefile structure in zip.');
           }
-          const fc = { type: 'FeatureCollection', features: geojson.features };
-          try { window.__DEBUG_LAST_GEOJSON__ = fc; } catch (e) {}
-          setInfo(`Converted ${fc.features.length} features (zip).`);
-          if (typeof onConvert === 'function') onConvert(fc);
+
+          const features = (fc.features || []).filter(f => f && f.geometry && f.geometry.coordinates);
+          if (features.length === 0) throw new Error('No features found in zipped shapefile');
+
+          const out = { type: 'FeatureCollection', features };
+          try { window.__DEBUG_LAST_GEOJSON__ = out; } catch {}
+          setInfo(`Converted ${features.length} features (zip).`);
+          if (typeof onConvert === 'function') onConvert(out);
           setIsLoading(false);
           hasLoadedRef.current = true;
           return;
         }
 
-        // If the UI passed multiple files (shp + dbf), try to combine them:
+        // Loose files path: .shp + .dbf (optional .shx/.prj)
         const shpFile = files?.find(f => f.name.toLowerCase().endsWith('.shp'));
         const dbfFile = files?.find(f => f.name.toLowerCase().endsWith('.dbf'));
-        const zipLikeFiles = files && files.length > 1 ? files : null;
 
         if (shpFile && dbfFile) {
-          // shpjs has a `parseShp(parseDbf)` API but simpler is to build a zip-like object
-          // Build a zip-like object expected by shp.parseShp / shp.parseDbf
           const shpBuffer = await shpFile.arrayBuffer();
           const dbfBuffer = await dbfFile.arrayBuffer();
 
-          // use shp.parseShp / parseDbf if available
           let geometries = [];
           let records = [];
           try {
             geometries = await shp.parseShp(shpBuffer);
             records = await shp.parseDbf(dbfBuffer);
           } catch (e) {
-            // Fallback: try the high-level parseZip-like helper by packaging into a blob zip is heavier,
-            // but many environments prefer uploading zip. If parseShp/parseDbf fail, throw.
-            throw e;
+            throw new Error('Failed reading .shp/.dbf buffers');
           }
 
           const features = (geometries || []).map((geom, i) => ({
@@ -69,7 +83,7 @@ const ShapefilePreview = ({ files, onClose, onConvert }) => {
           if (!features.length) throw new Error('No valid features found in shapefile.');
 
           const fc = { type: 'FeatureCollection', features };
-          try { window.__DEBUG_LAST_GEOJSON__ = fc; } catch (e) {}
+          try { window.__DEBUG_LAST_GEOJSON__ = fc; } catch {}
           setInfo(`Converted ${features.length} features (shp+dbf).`);
           if (typeof onConvert === 'function') onConvert(fc);
           setIsLoading(false);
@@ -77,15 +91,7 @@ const ShapefilePreview = ({ files, onClose, onConvert }) => {
           return;
         }
 
-        // As last resort, if multiple files are present (e.g., a zip was extracted by the uploader),
-        // try to pass them to shpjs high-level parser which accepts a File or ArrayBuffer or URL.
-        if (zipLikeFiles) {
-          // Create a combined zip (only if environment didn't already send a .zip)
-          // but shpjs.parseZip expects ArrayBuffer of a zip; if that's not available, we bail.
-          // Simpler: if user passed a single non-zip shapefile file we can't parse reliably here.
-          throw new Error('Please upload a zipped shapefile (.zip) or both .shp and .dbf files.');
-        }
-
+        // Fallback message if user dragged odd combos
         throw new Error('Unsupported upload form for shapefile. Provide a .zip or both .shp + .dbf.');
       } catch (err) {
         console.error('[Shapefile] Error:', err);
@@ -131,7 +137,7 @@ const ShapefilePreview = ({ files, onClose, onConvert }) => {
       <div style={{ color:'#065f46', fontWeight:600 }}>{info || 'Conversion complete'}</div>
       <div style={{ marginTop:8 }}>
         {typeof onConvert === 'function' && (
-          <button onClick={() => typeof onConvert === 'function' && onConvert(window.__DEBUG_LAST_GEOJSON__)} style={{ padding:'8px 12px', background:'#0ea5a4', color:'white', borderRadius:6 }}>
+          <button onClick={() => onConvert(window.__DEBUG_LAST_GEOJSON__)} style={{ padding:'8px 12px', background:'#0ea5a4', color:'white', borderRadius:6 }}>
             Open in GeoJSON Preview
           </button>
         )}

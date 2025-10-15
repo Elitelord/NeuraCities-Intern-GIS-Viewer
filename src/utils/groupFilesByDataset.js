@@ -8,22 +8,52 @@ const STEM = (name) => {
 /**
  * Groups uploaded files into logical datasets
  * Returns { datasets, errors }
- * - datasets: array of { kind, files[], label, size, previewable }
+ * - datasets: array of { kind, files[], label, size, previewable, warnings? }
  *   kind ∈ 'shapefile' | 'geojson' | 'csv' | 'excel' | 'kml' | 'kmz' | 'gpx' | 
- *         'geotiff' | 'autocad' | 'geopackage' | 'geodatabase' | 'arcgis-map' |
+ *         'geotiff' | 'autocad-dwg' | 'autocad-dxf' | 'geopackage' | 'geodatabase' | 'arcgis-map' |
  *         'arcgis-layer' | 'geopdf' | 'microstation' | 'lidar' | 'raster' | 
- *         'openstreetmap' | 'cityjson' | 'unknown'
+ *         'openstreetmap' | 'cityjson' | '3d-tiles' | 'topojson' | 'well-known' | 'gml' | 'unknown'
  */
 export function groupFilesByDataset(fileList) {
   const files = Array.from(fileList || []);
-  const byStem = new Map();
-  const singles = [];
   const errors = [];
+  const datasets = [];
 
-  // First pass: Group shapefile components by stem
+  // --- NEW: pull out zipped shapefiles first so the validator/router can accept them ---
+  const zipShapefiles = [];
+  const remaining = [];
+
   for (const f of files) {
     const ext = EXT(f.name);
-    if (['shp','dbf','shx','prj','sbn','sbx','cpg'].includes(ext)) {
+    if (ext === 'zip') {
+      // treat each .zip as a single shapefile dataset (the preview/parser will inspect contents)
+      zipShapefiles.push(f);
+    } else {
+      remaining.push(f);
+    }
+  }
+
+  // add each .zip as its own dataset
+  for (const z of zipShapefiles) {
+    const label = z.name.replace(/\.zip$/i, '');
+    datasets.push({
+      kind: 'shapefile',
+      label,
+      files: [z],
+      size: z.size,
+      previewable: true,
+      // optional nudge: the actual contents are validated later in ShapefilePreview
+      warnings: undefined
+    });
+  }
+
+  // --- Existing behavior: group loose shapefile components by stem (.shp/.dbf/.shx/.prj/…) ---
+  const byStem = new Map();
+  const singles = [];
+
+  for (const f of remaining) {
+    const ext = EXT(f.name);
+    if (['shp', 'dbf', 'shx', 'prj', 'sbn', 'sbx', 'cpg'].includes(ext)) {
       const key = STEM(f.name);
       if (!byStem.has(key)) byStem.set(key, []);
       byStem.get(key).push(f);
@@ -32,9 +62,7 @@ export function groupFilesByDataset(fileList) {
     }
   }
 
-  const datasets = [];
-
-  // Process shapefile groups
+  // Process shapefile groups from loose parts
   for (const [stem, group] of byStem.entries()) {
     const lower = group.map(g => g.name.toLowerCase());
     const hasSHP = lower.some(n => n.endsWith('.shp'));
@@ -45,17 +73,16 @@ export function groupFilesByDataset(fileList) {
     if (hasSHP && hasDBF) {
       const totalSize = group.reduce((sum, f) => sum + f.size, 0);
       const warnings = [];
-      
       if (!hasSHX) warnings.push('Missing .shx (index) file');
       if (!hasPRJ) warnings.push('Missing .prj (projection) file');
 
-      datasets.push({ 
-        kind: 'shapefile', 
-        label: stem, 
+      datasets.push({
+        kind: 'shapefile',
+        label: stem,
         files: group,
         size: totalSize,
         previewable: true,
-        warnings: warnings.length > 0 ? warnings : undefined
+        warnings: warnings.length ? warnings : undefined
       });
     } else {
       const missing = [];
@@ -68,7 +95,7 @@ export function groupFilesByDataset(fileList) {
     }
   }
 
-  // Process single files
+  // Process single non-shapefile files
   for (const f of singles) {
     const ext = EXT(f.name);
     let kind = 'unknown';
@@ -77,126 +104,109 @@ export function groupFilesByDataset(fileList) {
 
     // Vector formats
     if (['geojson','json'].includes(ext)) {
-      kind = 'geojson';
-      previewable = true;
-    } 
+      kind = 'geojson'; previewable = true;
+    }
     else if (ext === 'kml') {
-      kind = 'kml';
-      previewable = true;
-    } 
+      kind = 'kml'; previewable = true;
+    }
     else if (ext === 'kmz') {
-      kind = 'kmz';
-      previewable = true;
-    } 
+      kind = 'kmz'; previewable = true;
+    }
     else if (ext === 'gpx') {
-      kind = 'gpx';
-      previewable = true;
-    } 
+      kind = 'gpx'; previewable = true;
+    }
     else if (ext === 'csv') {
-      kind = 'csv';
-      previewable = true;
-      warnings = ['Preview requires coordinate columns (lat/lon or geometry)'];
-    } 
-    else if (['xlsx','xls'].includes(ext)) {
-      kind = 'excel';
-      previewable = true;
+      kind = 'csv'; previewable = true;
       warnings = ['Preview requires coordinate columns (lat/lon or geometry)'];
     }
+    else if (['xlsx','xls'].includes(ext)) {
+      kind = 'excel'; previewable = true;
+      warnings = ['Preview requires coordinate columns (lat/lon or geometry)'];
+    }
+
     // Raster formats
     else if (['tif','tiff'].includes(ext)) {
-      kind = 'geotiff';
-      previewable = false;
+      kind = 'geotiff'; previewable = false;
       warnings = ['Raster preview not yet supported - conversion available'];
     }
+
     // CAD formats
     else if (ext === 'dwg') {
-      kind = 'autocad-dwg';
-      previewable = false;
+      kind = 'autocad-dwg'; previewable = false;
       warnings = ['CAD preview not yet supported - conversion available'];
     }
     else if (ext === 'dxf') {
-      kind = 'autocad-dxf';
-      previewable = false;
+      kind = 'autocad-dxf'; previewable = false;
       warnings = ['CAD preview not yet supported - conversion available'];
     }
+
     // Database formats
     else if (ext === 'gpkg') {
-      kind = 'geopackage';
-      previewable = false;
+      kind = 'geopackage'; previewable = false;
       warnings = ['Database preview not yet supported - conversion available'];
     }
     else if (ext === 'gdb') {
-      kind = 'geodatabase';
-      previewable = false;
+      kind = 'geodatabase'; previewable = false;
       warnings = ['Geodatabase preview not yet supported - conversion available'];
     }
+
     // ArcGIS formats
     else if (['mxd','aprx'].includes(ext)) {
-      kind = 'arcgis-map';
-      previewable = false;
+      kind = 'arcgis-map'; previewable = false;
       warnings = ['ArcGIS map document preview not yet supported'];
     }
     else if (['lyr','lyrx'].includes(ext)) {
-      kind = 'arcgis-layer';
-      previewable = false;
+      kind = 'arcgis-layer'; previewable = false;
       warnings = ['ArcGIS layer preview not yet supported'];
     }
+
     // PDF formats
     else if (['pdf','pdfx'].includes(ext)) {
-      kind = 'geopdf';
-      previewable = false;
+      kind = 'geopdf'; previewable = false;
       warnings = ['GeoPDF preview not yet supported - conversion available'];
     }
+
     // Other formats
     else if (ext === 'dgnlib') {
-      kind = 'microstation';
-      previewable = false;
+      kind = 'microstation'; previewable = false;
       warnings = ['MicroStation preview not yet supported'];
     }
     else if (['las','laz'].includes(ext)) {
-      kind = 'lidar';
-      previewable = false;
+      kind = 'lidar'; previewable = false;
       warnings = ['LiDAR point cloud preview not yet supported'];
     }
     else if (['hdf','img','nc','nc4'].includes(ext)) {
-      kind = 'raster';
-      previewable = false;
+      kind = 'raster'; previewable = false;
       warnings = ['Raster format preview not yet supported'];
     }
     else if (ext === 'osm') {
-      kind = 'openstreetmap';
-      previewable = false;
+      kind = 'openstreetmap'; previewable = false;
       warnings = ['OSM preview not yet supported - conversion available'];
     }
     else if (ext === 'cityjson') {
-      kind = 'cityjson';
-      previewable = false;
+      kind = 'cityjson'; previewable = false;
       warnings = ['CityJSON 3D preview not yet supported - conversion available'];
     }
     else if (['gltf','glb'].includes(ext)) {
-      kind = '3d-tiles';
-      previewable = false;
+      kind = '3d-tiles'; previewable = false;
       warnings = ['3D tiles preview not yet supported'];
     }
     else if (ext === 'topojson') {
-      kind = 'topojson';
-      previewable = false;
+      kind = 'topojson'; previewable = false;
       warnings = ['TopoJSON preview not yet supported - conversion available'];
     }
     else if (['wkt','wkb'].includes(ext)) {
-      kind = 'well-known';
-      previewable = false;
+      kind = 'well-known'; previewable = false;
       warnings = ['Well-Known format preview not yet supported'];
     }
     else if (ext === 'gml') {
-      kind = 'gml';
-      previewable = false;
+      kind = 'gml'; previewable = false;
       warnings = ['GML preview not yet supported - conversion available'];
     }
 
-    datasets.push({ 
-      kind, 
-      label: f.name, 
+    datasets.push({
+      kind,
+      label: f.name,
       files: [f],
       size: f.size,
       previewable,
@@ -238,7 +248,6 @@ export function getDatasetKindLabel(kind) {
     'gml': 'GML',
     'unknown': 'Unknown Format'
   };
-  
   return labels[kind] || 'Unknown';
 }
 
@@ -273,6 +282,5 @@ export function getDatasetIcon(kind) {
     'gml': '📝',
     'unknown': '❓'
   };
-  
   return icons[kind] || '📁';
 }

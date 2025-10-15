@@ -79,7 +79,7 @@ export default function UploadDropzone({ onDatasetsReady }) {
             type="file"
             multiple
             className="hidden-input"
-            accept=".shp,.shx,.dbf,.prj,.sbn,.sbx,.cpg,.json,.geojson,.csv,.xlsx,.xls,.kml,.kmz,.gpx,.tif,.tiff,.dwg,.dxf,.gpkg,.gdb,.mxd,.aprx,.lyr,.lyrx,.pdf,.pdfx,.dgnlib,.las,.laz,.hdf,.img,.osm,.cityjson"
+            accept=".shp,.shx,.dbf,.prj,.sbn,.sbx,.cpg,.json,.geojson,.csv,.xlsx,.xls,.kml,.kmz,.gpx,.tif,.tiff,.dwg,.dxf,.gpkg,.gdb,.mxd,.aprx,.lyr,.lyrx,.pdf,.pdfx,.dgnlib,.las,.laz,.hdf,.img,.osm,.cityjson,.zip"
             onChange={onBrowse}
           />
           <p className="dz-hint text-sm text-gray-500 mt-4">
