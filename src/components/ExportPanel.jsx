@@ -110,6 +110,32 @@ export default function ExportPanel({
     return `${FIXED_PREFIX}${middle}.${ext}`;
   };
 
+  async function resolveGeoJSONForExport(dataset) {
+    // 1) already attached by previews?
+    if (dataset?.geojson?.type === 'FeatureCollection') return dataset.geojson;
+  
+    // 2) if the dataset is a raw .geojson/.json file, parse it now
+    const f = dataset?.files?.[0];
+    if (f && /\.(geojson|json)$/i.test(f.name)) {
+      const text = await f.text();
+      const j = JSON.parse(text);
+      if (j?.type === 'FeatureCollection') return j;
+      if (j?.type === 'Feature') return { type: 'FeatureCollection', features: [j] };
+      if (j?.type) return { type: 'FeatureCollection', features: [{ type: 'Feature', properties: {}, geometry: j }] };
+    }
+  
+    // 3) last-resort: preview cache (we set this in step 2 below)
+    if (typeof window !== 'undefined') {
+      const cache = window.__GEOJSON_CACHE__;
+      if (cache && dataset?.label && cache[dataset.label]?.type === 'FeatureCollection') {
+        return cache[dataset.label];
+      }
+    }
+  
+    throw new Error('No GeoJSON available for KML export');
+  }
+  
+
   /**
    * Robust download helper:
    * 1) If IE/Edge legacy supports msSaveOrOpenBlob -> use it
@@ -409,21 +435,19 @@ export default function ExportPanel({
                 const filename = await exportCSV(selectedDataset);
                 console.log('[ExportPanel] exportCSV returned filename:', filename);
               } else if (exportConfig.format === 'kml') {
-                // generate KML text and download as .kml (no zip)
                 try {
-                  const fc = selectedDataset.type === 'FeatureCollection'
-                    ? selectedDataset
-                    : (selectedDataset.features ? { type: 'FeatureCollection', features: selectedDataset.features } : selectedDataset.geojson);
-                  if (!fc) throw new Error('No GeoJSON available for KML export');
-                  const { kmlText, filename: returnedName } = geojsonToKML(fc, { nameField: 'name' });
-                  const filename = buildFilename(getFileExtension('kml'));
-                  createAndDownload(filename, new Blob([kmlText], { type: 'application/vnd.google-earth.kml+xml' }));
-                  console.log('[ExportPanel] KML exported:', filename);
+                  const fc = await resolveGeoJSONForExport(selectedDataset);
+                  const { kmlText, filename } = geojsonToKML(fc);
+                  const blob = new Blob([kmlText], { type: 'application/vnd.google-earth.kml+xml' });
+                  const outName = buildFilename('kml') || filename;
+                  createAndDownload(outName, blob);
+                  console.log('[ExportPanel] KML exported:', outName);
                 } catch (err) {
                   console.error('[ExportPanel] KML export failed', err);
-                  setDownloadError('KML export failed');
+                  setDownloadError('KML export failed: ' + (err?.message || err));
                 }
-              } else if (exportConfig.format === 'kmz') {
+              }
+              else if (exportConfig.format === 'kmz') {
                 const filename = await Promise.resolve(exportKMZ(selectedDataset));
                 console.log('[ExportPanel] exportKMZ returned filename:', filename);
               } else {

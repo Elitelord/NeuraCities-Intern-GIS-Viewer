@@ -3,31 +3,94 @@ import JSZip from 'jszip';
 import * as toGeoJSON from '@tmcw/togeojson';
 import Papa from 'papaparse';
 
+
+
+
+
+export async function gpxToGeoJSON(file) {
+  if (!file) throw new Error('No GPX file provided');
+  const text = await file.text();
+  const dom = new DOMParser().parseFromString(text, 'application/xml');
+  if (dom.documentElement.nodeName === 'parsererror') {
+    throw new Error('Invalid GPX XML');
+  }
+  const fc = toGeoJSON.gpx(dom);
+  const features = (fc?.features || []).filter(f => f?.geometry?.coordinates);
+  if (!features.length) throw new Error('No features found in GPX');
+  return {
+    type: 'FeatureCollection',
+    features,
+    metadata: { name: file.name.replace(/\.gpx$/i, '') }
+  };
+}
 /**
  * KMZ -> GeoJSON (FeatureCollection)
  * Accepts a File (KMZ) and returns a FeatureCollection object.
  */
+export async function kmlToGeoJSON(file) {
+  if (!file) throw new Error('No KML file provided');
+  const text = await file.text();
+  const dom = new DOMParser().parseFromString(text, 'application/xml');
+  if (dom.documentElement.nodeName === 'parsererror') throw new Error('Invalid KML XML');
+
+  const gj = toGeoJSON.kml(dom);
+
+  // flatten GeometryCollection (from <MultiGeometry>) into separate features
+  const out = [];
+  for (const f of gj.features || []) {
+    if (!f || !f.geometry) continue;
+
+    if (f.geometry.type === 'GeometryCollection' && Array.isArray(f.geometry.geometries)) {
+      for (const g of f.geometry.geometries) {
+        if (!g) continue;
+        out.push({ type: 'Feature', geometry: g, properties: { ...(f.properties || {}) } });
+      }
+      continue;
+    }
+
+    // keep normal geometries (Point/LineString/Polygon/Multi*)
+    out.push(f);
+  }
+
+  if (!out.length) throw new Error('No features found in KML after normalization');
+  return { type: 'FeatureCollection', features: out, metadata: { name: file.name.replace(/\.kml$/i, '') } };
+}
+
+// Replace your kmzToGeoJSON with this:
 export async function kmzToGeoJSON(file) {
   if (!file) throw new Error('No KMZ file provided');
   const buffer = await file.arrayBuffer();
   const zip = await JSZip.loadAsync(buffer);
 
-  // Find a .kml file inside the KMZ
-  const kmlFile = Object.values(zip.files).find(f =>
+  const kmlEntry = Object.values(zip.files).find(f =>
     f.name.toLowerCase().endsWith('.kml') && !f.name.startsWith('__MACOSX')
   );
-  if (!kmlFile) throw new Error('No KML file found in KMZ archive');
+  if (!kmlEntry) throw new Error('No KML file found in KMZ archive');
 
-  const kmlText = await kmlFile.async('text');
-  const parser = new DOMParser();
-  const kmlDoc = parser.parseFromString(kmlText, 'application/xml');
-  if (kmlDoc.documentElement.nodeName === 'parsererror') {
-    throw new Error('Invalid KML format in KMZ');
+  const kmlText = await kmlEntry.async('text');
+  const kmlDoc = new DOMParser().parseFromString(kmlText, 'application/xml');
+  if (kmlDoc.documentElement.nodeName === 'parsererror') throw new Error('Invalid KML format in KMZ');
+
+  const gj = toGeoJSON.kml(kmlDoc);
+
+  // same flattening as KML
+  const out = [];
+  for (const f of gj.features || []) {
+    if (!f || !f.geometry) continue;
+
+    if (f.geometry.type === 'GeometryCollection' && Array.isArray(f.geometry.geometries)) {
+      for (const g of f.geometry.geometries) {
+        if (!g) continue;
+        out.push({ type: 'Feature', geometry: g, properties: { ...(f.properties || {}) } });
+      }
+      continue;
+    }
+
+    out.push(f);
   }
 
-  const geojson = toGeoJSON.kml(kmlDoc);
-  const features = (geojson.features || []).filter(f => f && f.geometry && f.geometry.coordinates);
-  return { type: 'FeatureCollection', features, metadata: { name: file.name } };
+  if (!out.length) throw new Error('No features found in KMZ after normalization');
+  return { type: 'FeatureCollection', features: out, metadata: { name: file.name } };
 }
 
 /**

@@ -3,31 +3,48 @@ import ShapefilePreview from './ShapefilePreview';
 import GeoJsonPreview from './GeojsonPreview';
 import CsvExcelPreview from './CsvExcelPreview';
 import KmzPreview from './KmzPreview';
-import { kmzToGeoJSON, csvToGeoJSON } from './converters/fromFiles'; // path may vary
+
+// ✅ Use shared converters so XML types aren't JSON.parsed by mistake
+import {
+  kmlToGeoJSON,
+  kmzToGeoJSON,
+  gpxToGeoJSON,
+  csvToGeoJSON,
+  // (you can import shapefileToGeoJSON if you ever want to convert in-router)
+} from './converters/fromFiles';
 
 /**
  * PreviewRouter
- * - Centralized conversion for CSV / KMZ -> GeoJSON using shared converters.
+ * - Centralized conversion to GeoJSON for CSV / KML / KMZ / GPX using shared converters.
  * - Emits converted FeatureCollection via onGeoJSONReady.
  * - Renders GeoJsonPreview for converted content (passes a Blob/File).
- * - Falls back to original per-format preview components for formats not converted here.
+ * - Falls back to original per-format preview components where that UX is better (e.g., shapefile, Excel).
  */
 export default function PreviewRouter({ dataset, onGeoJSONReady, onStyleChange }) {
-  const [readyFile, setReadyFile] = useState(null); // Blob/File to feed GeoJsonPreview
-  const [status, setStatus] = useState('idle'); // 'idle' | 'prepping' | 'error'
+  const [readyFile, setReadyFile] = useState(null);     // Blob/File for GeoJsonPreview
+  const [status, setStatus] = useState('idle');         // 'idle' | 'prepping' | 'error'
   const [error, setError] = useState(null);
-if (!dataset) return null;
 
+  if (!dataset) return null;
 
- const emitFC = ({ label, geojson }) => {
+  const emitFC = ({ label, geojson }) => {
     onGeoJSONReady?.({ label, geojson });
-    if (typeof window !== 'undefined') {
-      try {
-        window.dispatchEvent(new CustomEvent('geojson:ready', { detail: { label, geojson } }));
-      } catch (e) {
-        // ignore envs that don't allow CustomEvent
-      }
-    }
+    // Cache for export fallbacks
+    try {
+      window.__GEOJSON_CACHE__ = window.__GEOJSON_CACHE__ || {};
+      if (label) window.__GEOJSON_CACHE__[label] = geojson;
+    } catch {}
+    // Optional global event
+    try {
+      window.dispatchEvent(new CustomEvent('geojson:ready', { detail: { label, geojson } }));
+    } catch {}
+  };
+
+  // Helper: wrap a FeatureCollection as a File-like Blob for GeoJsonPreview
+  const toGeoJSONBlob = (fc, name) => {
+    const blob = new Blob([JSON.stringify(fc, null, 2)], { type: 'application/geo+json' });
+    try { blob.name = `${(name || 'converted').replace(/\s+/g, '_')}.geojson`; } catch {}
+    return blob;
   };
 
   useEffect(() => {
@@ -37,87 +54,74 @@ if (!dataset) return null;
     setStatus('idle');
 
     if (!dataset) return;
-
-    const keyFile = dataset.files && dataset.files[0];
+    const keyFile = dataset.files?.[0];
+    const label = dataset.label || (keyFile?.name ?? 'dataset');
 
     const prepareFromGeoJSON = (fc) => {
-      // create a blob/file for GeoJsonPreview (it expects files prop)
-      const blob = new Blob([JSON.stringify(fc, null, 2)], { type: 'application/geo+json' });
-      try { blob.name = `${(dataset.label || 'converted').replace(/\s+/g, '_')}.geojson`; } catch (e) {}
       if (!mounted) return;
+      const blob = toGeoJSONBlob(fc, label);
       setReadyFile(blob);
-      emitFC({ label: dataset.label, geojson: fc });
+      emitFC({ label, geojson: fc });
       setStatus('idle');
     };
 
     const run = async () => {
       setStatus('prepping');
-
       try {
-        // If dataset already contains geojson, use it
-        if (dataset.geojson && dataset.geojson.type === 'FeatureCollection') {
+        // 0) Already have a FC attached by a preview
+        if (dataset.geojson?.type === 'FeatureCollection') {
           prepareFromGeoJSON(dataset.geojson);
           return;
         }
 
-        // If raw file is already GeoJSON file, pass it straight through
-        if (keyFile && keyFile.name && keyFile.name.toLowerCase().endsWith('.geojson')) {
+        // 1) Pass-through raw GeoJSON/JSON file (let GeoJsonPreview parse/validate)
+        if (keyFile && /\.(geojson|json)$/i.test(keyFile.name)) {
           if (!mounted) return;
           setReadyFile(keyFile);
-          // Optionally attempt to parse and emit (we won't parse here to avoid duplication)
           setStatus('idle');
           return;
         }
 
-        // KMZ -> GeoJSON conversion
+        // 2) CSV → GeoJSON (auto-convert)
+        if (dataset.kind === 'csv' && keyFile) {
+          const fc = await csvToGeoJSON(keyFile);
+          if (!fc?.features?.length) throw new Error('CSV produced no mappable features (need lat/lon or geometry).');
+          prepareFromGeoJSON(fc);
+          return;
+        }
+
+        // 3) Excel → use Excel preview (sheet selection, etc.)
+        if (dataset.kind === 'excel') {
+          setStatus('idle');
+          return; // handled in switch() fallback
+        }
+
+        // 4) KML → GeoJSON (XML via togeojson)
+        if (dataset.kind === 'kml' && keyFile) {
+          const fc = await kmlToGeoJSON(keyFile);
+          prepareFromGeoJSON(fc);
+          return;
+        }
+
+        // 5) KMZ → GeoJSON (zip of KML via togeojson)
         if (dataset.kind === 'kmz' && keyFile) {
-          try {
-            const fc = await kmzToGeoJSON(keyFile);
-            if (!mounted) return;
-            prepareFromGeoJSON(fc);
-            return;
-          } catch (err) {
-            console.error('[PreviewRouter] kmzToGeoJSON failed', err);
-            if (!mounted) return;
-            setError('KMZ → GeoJSON conversion failed: ' + (err.message || String(err)));
-            setStatus('error');
-            return;
-          }
+          const fc = await kmzToGeoJSON(keyFile);
+          prepareFromGeoJSON(fc);
+          return;
         }
 
-        // CSV/Excel -> GeoJSON conversion (CSV primary)
-        if ((dataset.kind === 'csv' || dataset.kind === 'excel') && keyFile) {
-          try {
-            // Prefer csvToGeoJSON for .csv files; for excel you might keep CsvExcelPreview
-            if (keyFile.name && keyFile.name.toLowerCase().endsWith('.csv')) {
-              const fc = await csvToGeoJSON(keyFile);
-              if (!mounted) return;
-              if (!fc || !Array.isArray(fc.features) || fc.features.length === 0) {
-                setError('CSV conversion produced no mappable features (no coordinate columns).');
-                setStatus('error');
-                return;
-              }
-              prepareFromGeoJSON(fc);
-              return;
-            } else {
-              // For .xlsx/.xls, fallback to CsvExcelPreview which handles sheet selection
-              // So render CsvExcelPreview below (no conversion here)
-              setStatus('idle');
-              setReadyFile(null);
-              return;
-            }
-          } catch (err) {
-            console.error('[PreviewRouter] csvToGeoJSON failed', err);
-            if (!mounted) return;
-            setError('CSV → GeoJSON conversion failed: ' + (err.message || String(err)));
-            setStatus('error');
-            return;
-          }
+        // 6) GPX → GeoJSON
+        if (dataset.kind === 'gpx' && keyFile) {
+          const fc = await gpxToGeoJSON(keyFile);
+          prepareFromGeoJSON(fc);
+          return;
         }
 
-        // If we reach here, defer to existing per-format preview components
+        // 7) Shapefile → keep dedicated preview (progress, messages)
+        // handled below in switch()
+
+        // 8) Unknown or other kinds → let fallbacks handle
         setStatus('idle');
-        setReadyFile(null);
       } catch (err) {
         console.error('[PreviewRouter] prepare error', err);
         if (!mounted) return;
@@ -127,33 +131,26 @@ if (!dataset) return null;
     };
 
     run();
-
-    return () => {
-      mounted = false;
-    };
+    return () => { mounted = false; };
   }, [dataset]);
 
-  // Force remount key so previews re-run parsing when dataset changes
+  // Re-mount previews when dataset identity/kind changes
   const k = `${dataset?.label || 'dataset'}::${dataset?.kind || 'unknown'}`;
 
-  if (!dataset) return null;
-
-  // Error state
   if (status === 'error') {
     return (
       <div style={{ padding: 14 }}>
-        <div style={{ color: '#b91c1c', fontWeight: 700 }}>Could not prepare preview</div>
+        <div style={{ color: '#b91c1c', fontWeight: 700, marginBottom: 6 }}>Could not prepare preview</div>
         <div style={{ color: '#374151' }}>{error}</div>
       </div>
     );
   }
 
-  // Preparing state
   if (status === 'prepping') {
     return <div style={{ padding: 14 }}>Preparing preview…</div>;
   }
 
-  // If we have a readyFile (converted GeoJSON Blob/File), render GeoJsonPreview
+  // If we produced a GeoJSON blob/file, show the unified GeoJSON preview
   if (readyFile) {
     return (
       <GeoJsonPreview
@@ -165,18 +162,46 @@ if (!dataset) return null;
     );
   }
 
-  // Fallbacks: use original preview components for formats we didn't convert here
+  // Fallbacks (formats we didn't convert here or want dedicated UX for)
   switch (dataset.kind) {
     case 'shapefile':
-      return <ShapefilePreview key={k} files={dataset.files} onConvert={(fc) => emitFC({ label: dataset.label, geojson: fc })}  />;
+      return (
+        <ShapefilePreview
+          key={k}
+          files={dataset.files}
+          onConvert={(fc) => emitFC({ label: dataset.label, geojson: fc })}
+        />
+      );
+
     case 'excel':
-      return <CsvExcelPreview key={k} files={dataset.files} onConvert={(fc) => emitFC({ label: dataset.label, geojson: fc })} />;
+      return (
+        <CsvExcelPreview
+          key={k}
+          files={dataset.files}
+          onConvert={(fc) => emitFC({ label: dataset.label, geojson: fc })}
+        />
+      );
+
     case 'csv':
-      // For CSV we attempted conversion above for .csv files; if we reach here, use CsvExcelPreview as fallback
-      return <CsvExcelPreview key={k} files={dataset.files} onConvert={(fc) => emitFC({ label: dataset.label, geojson: fc })} />;
+      // If we’re here, conversion didn’t run (non-.csv or special case) — use CSV/Excel preview
+      return (
+        <CsvExcelPreview
+          key={k}
+          files={dataset.files}
+          onConvert={(fc) => emitFC({ label: dataset.label, geojson: fc })}
+        />
+      );
+
     case 'kmz':
-      // For KMZ we attempted conversion above; fallback to KmzPreview if conversion didn't run
-      return <KmzPreview key={k} files={dataset.files} onConvert={(fc) => emitFC({ label: dataset.label, geojson: fc })} />;
+      // Usually handled above; keep a fallback (nice to have)
+      return (
+        <KmzPreview
+          key={k}
+          files={dataset.files}
+          onConvert={(fc) => emitFC({ label: dataset.label, geojson: fc })}
+        />
+      );
+
     case 'geojson':
       return (
         <GeoJsonPreview
@@ -186,8 +211,26 @@ if (!dataset) return null;
           onStyleChange={onStyleChange}
         />
       );
+
+    // KML/GPX should have been converted above; if they fall through, show a friendly message
+    case 'kml':
+    case 'gpx':
+      return (
+        <div style={{ padding: 14 }}>
+          Unable to prepare preview for {dataset.kind.toUpperCase()}.
+          Please re-add the file; if the issue persists, check the console for details.
+        </div>
+      );
+
     default:
-      // unknown kinds -> try GeoJsonPreview directly (it will error gracefully)
-      return <GeoJsonPreview key={k} files={dataset.files} onConvert={(fc) => emitFC({ label: dataset.label, geojson: fc })} onStyleChange={onStyleChange} />;
+      // Unknown kinds → try GeoJSON preview (it fails gracefully with a message)
+      return (
+        <GeoJsonPreview
+          key={k}
+          files={dataset.files}
+          onConvert={(fc) => emitFC({ label: dataset.label, geojson: fc })}
+          onStyleChange={onStyleChange}
+        />
+      );
   }
 }
