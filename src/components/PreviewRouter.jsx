@@ -25,6 +25,8 @@ export default function PreviewRouter({ dataset, onGeoJSONReady, onStyleChange }
   const [readyFile, setReadyFile] = useState(null);     // Blob/File for GeoJsonPreview
   const [status, setStatus] = useState('idle');         // 'idle' | 'prepping' | 'error'
   const [error, setError] = useState(null);
+  const [shapefileAttempted, setShapefileAttempted] = useState(false);
+
 
   if (!dataset) return null;
 
@@ -61,7 +63,9 @@ export default function PreviewRouter({ dataset, onGeoJSONReady, onStyleChange }
     const prepareFromGeoJSON = (fc) => {
       if (!mounted) return;
       const blob = toGeoJSONBlob(fc, label);
+       
       setReadyFile(blob);
+      
       emitFC({ label, geojson: fc });
       setStatus('idle');
     };
@@ -113,16 +117,31 @@ export default function PreviewRouter({ dataset, onGeoJSONReady, onStyleChange }
 
         // 6) GPX → GeoJSON
         if (dataset.kind === 'gpx' && keyFile) {
+          console.log(keyFile);
           const fc = await gpxToGeoJSON(keyFile);
           prepareFromGeoJSON(fc);
           return;
         }
-        if (dataset.kind === 'shapefile' || dataset.kind === 'zip' && keyFile) {
-          const fx = await shapefileToGeoJSON([keyFile]);
-          prepareFromGeoJSON(fx)
-        }
-        // 7) Shapefile → keep dedicated preview (progress, messages)
-        // handled below in switch()
+        
+        // 7) Shapefile -> keep dedicated preview (progress, messages)
+// handled below in switch()
+if ((dataset.kind === 'shapefile' || dataset.kind === 'zip') && keyFile) {
+  // mark that we attempted conversion (so fallback won't mount until this finished)
+  setShapefileAttempted(true);
+
+  try {
+   
+    const fc = await shapefileToGeoJSON(dataset.files);
+    
+    prepareFromGeoJSON(fc);
+    return; 
+  } catch (err) {
+    console.error('[Shapefile] parse error', err);
+    if (mounted) setStatus('idle');
+    // and then return so we don't continue with the rest of run()
+    return;
+  }
+}
 
         // 8) Unknown or other kinds → let fallbacks handle
         setStatus('idle');
@@ -168,15 +187,20 @@ export default function PreviewRouter({ dataset, onGeoJSONReady, onStyleChange }
 
   // Fallbacks (formats we didn't convert here or want dedicated UX for)
   switch (dataset.kind) {
-    case 'shapefile':
-      return (
-        <ShapefilePreview
-          key={k}
-          files={dataset.files}
-          onConvert={(fc) => emitFC({ label: dataset.label, geojson: fc })}
-        />
-      );
-
+//     case 'shapefile':
+//   // If we haven't attempted conversion yet, show "Preparing" (avoid mounting fallback parser)
+//   if (!shapefileAttempted && status === 'prepping') {
+    
+//   }
+//   else {
+//   return (
+//     <ShapefilePreview
+//       key={k}
+//       files={dataset.files}
+//       onConvert={(fc) => emitFC({ label: dataset.label, geojson: fc })}
+//     />
+//   );
+// }
     case 'excel':
       return (
         <CsvExcelPreview

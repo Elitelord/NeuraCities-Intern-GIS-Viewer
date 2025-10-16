@@ -15,37 +15,82 @@ import shp from 'shpjs';
 export async function shapefileToGeoJSON(fileOrFiles) {
   if (!fileOrFiles) throw new Error('No shapefile provided');
 
-  // Accept either a single File object (zip or .shp), or an array-like of files (e.g. multiple parts uploaded)
-  const files = Array.isArray(fileOrFiles) ? fileOrFiles : [fileOrFiles];
+  // ---- Normalize incoming input into a flat array of File objects ----
+  let files = [];
 
-  // Helper to find if one of the files is a zip
-  const zipFile = files.find(f => /\.zip$/i.test(f.name));
-  if (zipFile) {
-    const buffer = await zipFile.arrayBuffer();
-    const geojson = await shp(buffer); // shpjs will parse zip ArrayBuffer -> GeoJSON
-    const features = (geojson?.features || []).filter(f => f?.geometry?.coordinates);
-    if (!features.length) throw new Error('No features found in shapefile ZIP');
-    return { type: 'FeatureCollection', features, metadata: { name: zipFile.name.replace(/\.zip$/i, '') } };
+  // If it's a FileList
+  if (typeof FileList !== 'undefined' && fileOrFiles instanceof FileList) {
+    files = Array.from(fileOrFiles);
+  } else if (Array.isArray(fileOrFiles)) {
+    // Flatten nested FileLists and arrays; keep only truthy items
+    files = fileOrFiles.flatMap(item => {
+      if (!item) return [];
+      if (typeof FileList !== 'undefined' && item instanceof FileList) return Array.from(item);
+      if (Array.isArray(item)) return item.flat(); // small flatten if nested arrays
+      return [item];
+    });
+  } else {
+    // single File-like object
+    files = [fileOrFiles];
   }
 
-  // If user uploaded multiple component files (shp, dbf, shx) or a single shapefile part,
-  // package them into a zip using JSZip and then parse with shpjs.
+  // Keep only File-like things (have .name and .arrayBuffer)
+  files = files.filter(f => f && typeof f.name === 'string' && typeof f.arrayBuffer === 'function');
+
+  console.debug('[shapefileToGeoJSON] normalized files count:', files.length);
+  console.debug('[shapefileToGeoJSON] normalized file names:', files.map(f => f.name));
+
+  const lowerNames = files.map(f => (f && f.name ? f.name.toLowerCase() : ''));
+
+  // ---- If a zip was up ed directly, prefer that ----
+  const zipFile = files.find(f => /\.zip$/i.test(f.name));
+  if (zipFile) {
+    try {
+      const buffer = await zipFile.arrayBuffer();
+      const geojson = await shp(buffer);
+      const features = (geojson?.features || []).filter(f => f?.geometry?.coordinates);
+      if (!features.length) throw new Error('No features found in shapefile ZIP (no geometries).');
+      return { type: 'FeatureCollection', features, metadata: { name: zipFile.name.replace(/\.zip$/i, '') } };
+    } catch (err) {
+      throw new Error(`Failed to parse shapefile ZIP. Provided: ${lowerNames.join(', ')}. Parser error: ${err?.message ?? err}`);
+    }
+  }
+
+  // ---- Validate presence of required parts ----
+  const hasShp = lowerNames.some(n => n.endsWith('.shp'));
+  const hasDbf = lowerNames.some(n => n.endsWith('.dbf'));
+
+  if (!hasShp || !hasDbf) {
+    const missing = [];
+    if (!hasShp) missing.push('.shp');
+    if (!hasDbf) missing.push('.dbf');
+    // include what we actually received for easier debugging
+    throw new Error(`Shapefile parts missing: please include ${missing.join(' and ')}. Received: ${lowerNames.join(', ')}`);
+  }
+
+  // ---- Build zip containing only the shapefile-related parts ----
   const zip = new JSZip();
-  // Add all provided files into the zip with their original names.
   for (const f of files) {
-    // only add recognized shapefile-related extensions
-    const name = f.name || `file_${Math.random().toString(36).slice(2,8)}`;
-    zip.file(name, await f.arrayBuffer());
+    if (!f || !f.name) continue;
+    // include typical shapefile related extensions only
+    if (!/\.(shp|dbf|shx|prj|cpg|sbn|sbx)$/i.test(f.name)) continue;
+    const data = await f.arrayBuffer();
+    zip.file(f.name, data);
   }
 
   const zipped = await zip.generateAsync({ type: 'arraybuffer', compression: 'DEFLATE' });
-  const geojson = await shp(zipped);
-  const features = (geojson?.features || []).filter(f => f?.geometry?.coordinates);
-  if (!features.length) throw new Error('No features found in shapefile archive');
-  // choose a base name from the first file
-  const baseName = (files[0]?.name || 'shapefile').replace(/\.(shp|dbf|shx|prj|cpg|zip)$/i, '');
-  return { type: 'FeatureCollection', features, metadata: { name: baseName } };
+
+  try {
+    const geojson = await shp(zipped);
+    const features = (geojson?.features || []).filter(f => f?.geometry?.coordinates);
+    if (!features.length) throw new Error('No features found in shapefile archive (no geometries).');
+    const baseName = (files[0]?.name || 'shapefile').replace(/\.(shp|dbf|shx|prj|cpg|zip)$/i, '');
+    return { type: 'FeatureCollection', features, metadata: { name: baseName } };
+  } catch (err) {
+    throw new Error(`Failed to parse assembled shapefile archive. Provided parts: ${lowerNames.join(', ')}. Parser error: ${err?.message ?? err}`);
+  }
 }
+
 
 export async function gpxToGeoJSON(file) {
   if (!file) throw new Error('No GPX file provided');
