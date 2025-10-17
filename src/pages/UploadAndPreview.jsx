@@ -57,21 +57,27 @@ export default function UploadAndPreview() {
 
   const removeDataset = (toRemove) => {
     const id = keyFor(toRemove);
+
     setDatasets((prev) => {
+      // 1) build the new list first
       const filtered = prev.filter((d) => d._id !== id);
 
-      // if removing active, select next or clear and clear map
-      if (active && active._id === id) {
-        const next = filtered[0] || null;
-        setActive(next);
-        if (!next && typeof window !== "undefined") {
-          window.dispatchEvent(new Event("map:clear"));
-        }
+      // 2) decide who should be active *before* we call any setters
+      const wasActive = active && active._id === id;
+      const nextActive = wasActive ? (filtered[0] || null) : active;
+
+      // 3) clear the map immediately if we just removed the active dataset
+      if (wasActive && typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("map:clear"));
       }
+
+      // 4) update active on the next tick to avoid reducer timing issues
+      queueMicrotask(() => setActive(nextActive));
+
       return filtered;
     });
 
-    // drop buckets
+    // 5) drop style + geojson buckets for the removed id
     setStyleMap((prev) => {
       const copy = { ...prev };
       delete copy[id];

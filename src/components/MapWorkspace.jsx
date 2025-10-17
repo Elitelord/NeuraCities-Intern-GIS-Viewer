@@ -30,6 +30,8 @@ export default function MapWorkspace({ datasets = [], active = null, styleOption
       if (!mapRef.current) return;
       if (layerRef.current) { mapRef.current.removeLayer(layerRef.current); layerRef.current = null; }
       if (connectLayerRef.current) { mapRef.current.removeLayer(connectLayerRef.current); connectLayerRef.current = null; }
+      setInternalActive(null);
+      setInternalStyle({});
     };
 
     window.addEventListener("geojson:ready", onReady);
