@@ -58,26 +58,26 @@ export default function MapWorkspace({ datasets = [], active = null, styleOption
     const map = L.map(mapEl.current, {
       center: [30.2672, -97.7431],
       zoom: 4,
-      zoomControl: true,
-      attributionControl: true,
+      zoomControl: false,
+      attributionControl: false,
     });
     mapRef.current = map;
 
     const osm = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
       maxZoom: 19,
-      attribution: "&copy; OpenStreetMap contributors",
+      attribution: "",
     }).addTo(map);
 
     const esri = L.tileLayer(
       "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-      { maxZoom: 19, attribution: "Tiles &copy; Esri" }
+      { maxZoom: 19, attribution: "" }
     );
 
-    L.control.layers(
-      { OpenStreetMap: osm, "Esri World Imagery": esri },
-      null,
-      { collapsed: true, position: "topright" }
-    ).addTo(map);
+    // L.control.layers(
+    //   { OpenStreetMap: osm, "Esri World Imagery": esri },
+    //   null,
+    //   { collapsed: true, position: "topright" }
+    // ).addTo(map);
   }, []);
 
   const n = (v, d) => (Number.isFinite(Number(v)) ? Number(v) : d);
