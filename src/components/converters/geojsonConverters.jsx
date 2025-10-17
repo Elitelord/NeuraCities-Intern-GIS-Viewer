@@ -1,10 +1,192 @@
 // converters/geojsonConverters.js
 import JSZip from 'jszip';
+import html2canvas from 'html2canvas';
+
 // import shpwrite from 'shp-write';
 
+function bboxOfGeoJSON(fc) {
+  let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
+  function visitCoords(coords){
+    if (typeof coords[0] === 'number') {
+      const [lng,lat]=coords;
+      minX=Math.min(minX,lng); minY=Math.min(minY,lat);
+      maxX=Math.max(maxX,lng); maxY=Math.max(maxY,lat);
+    } else coords.forEach(visitCoords);
+  }
+  fc.features.forEach(f=>{
+    if (!f.geometry) return;
+    const g=f.geometry;
+    if (g.type==='Point') visitCoords(g.coordinates);
+    else visitCoords(g.coordinates);
+  });
+  if (!isFinite(minX)) { minX=-180; minY=-90; maxX=180; maxY=90; }
+  return [minX,minY,maxX,maxY];
+}
+
+function coordsToSvgPath(coords, proj) {
+  if (typeof coords[0] === 'number') {
+    const [x,y] = proj(coords);
+    return `${x} ${y}`;
+  }
+  return coords.map(r => coordsToSvgPath(r, proj)).map(s => 'M ' + s).join(' ');
+}
+
+/**
+ * Render GeoJSON to PNG by drawing into an SVG and rasterizing it.
+ * - No basemap tiles.
+ */
+export async function geojsonToPNG_SVG(fc, opts = {}) {
+  const { width = 1200, height = 800, padding = 20, nameField } = opts;
+  if (!fc || fc.type !== 'FeatureCollection') throw new Error('Expected FeatureCollection');
+
+  const [minX,minY,maxX,maxY] = bboxOfGeoJSON(fc);
+  const dataW = maxX - minX || 1;
+  const dataH = maxY - minY || 1;
+
+  // We'll use a simple equirectangular mapping (lon/lat -> linear) which is okay for many extents.
+  // For more accurate world-scale rendering, use Web Mercator projection. Below is Web Mercator conversions:
+  const lonToX = lon => ( (lon - minX) / dataW ) * (width - padding*2) + padding;
+  const latToY = lat => {
+    // approximate Web Mercator Y
+    const mercY = (Math.log(Math.tan((Math.PI/4) + (lat * Math.PI/180)/2)));
+    // compute min/max mercY for bbox for consistent scaling
+    const mercMinY = Math.log(Math.tan((Math.PI/4) + (minY * Math.PI/180)/2));
+    const mercMaxY = Math.log(Math.tan((Math.PI/4) + (maxY * Math.PI/180)/2));
+    return ((mercMaxY - mercY) / (mercMaxY - mercMinY || 1)) * (height - padding*2) + padding;
+  };
+  const proj = ([lon,lat]) => [lonToX(lon), latToY(lat)];
+
+  // build svg content
+  const svgParts = [`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">`,
+    `<rect width="100%" height="100%" fill="#ffffff"/>`];
+
+  for (const f of fc.features) {
+    if (!f.geometry) continue;
+    const g = f.geometry;
+    if (g.type === 'Point') {
+      const [x,y] = proj(g.coordinates);
+      svgParts.push(`<circle cx="${x}" cy="${y}" r="4" fill="#ff5722" stroke="#c1411a" stroke-width="1"/>`);
+    } else if (g.type === 'LineString') {
+      const path = g.coordinates.map(c => proj(c).join(',')).join(' ');
+      svgParts.push(`<polyline points="${path}" fill="none" stroke="#2b8cbe" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>`);
+    } else if (g.type === 'Polygon') {
+      for (const ring of g.coordinates) {
+        const path = ring.map(c => proj(c).join(',')).join(' ');
+        svgParts.push(`<polygon points="${path}" fill="#2b8cbe" fill-opacity="0.16" stroke="#2b8cbe" stroke-width="1"/>`);
+      }
+    } else if (g.type === 'MultiPolygon') {
+      for (const poly of g.coordinates) {
+        for (const ring of poly) {
+          const path = ring.map(c => proj(c).join(',')).join(' ');
+          svgParts.push(`<polygon points="${path}" fill="#2b8cbe" fill-opacity="0.16" stroke="#2b8cbe" stroke-width="1"/>`);
+        }
+      }
+    } else if (g.type === 'MultiLineString') {
+      for (const ln of g.coordinates) {
+        const path = ln.map(c => proj(c).join(',')).join(' ');
+        svgParts.push(`<polyline points="${path}" fill="none" stroke="#2b8cbe" stroke-width="2"/>`);
+      }
+    }
+  }
+
+  svgParts.push('</svg>');
+  const svgStr = svgParts.join('');
+  const svgBlob = new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' });
+  const url = URL.createObjectURL(svgBlob);
+
+  try {
+    const img = await new Promise((res, rej) => {
+      const i = new Image();
+      i.onload = () => res(i);
+      i.onerror = (e) => rej(new Error('SVG -> Image load failed'));
+      i.src = url;
+      // important: do NOT set crossOrigin (we created the blob locally)
+    });
+
+    const canvas = document.createElement('canvas');
+    canvas.width = width; canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0, width, height);
+
+    const blob = await new Promise((resolve, reject) => {
+      canvas.toBlob(b => {
+        if (!b) reject(new Error('Canvas produced null blob'));
+        else resolve(b);
+      }, 'image/png');
+    });
+    const filename = `${sanitizeName((fc.metadata && fc.metadata.name) || nameField || 'map_export')}.png`;
+    return { blob, filename };
+  } finally {
+    try { URL.revokeObjectURL(url); } catch(e) {}
+  }
+}
+/**
+ * Capture the map (tiles + vectors) using Leaflet and html2canvas.
+ * - fc: GeoJSON FeatureCollection
+ * - options: { width, height, fitBounds, tileUrl, tileOptions, nameField }
+ *
+ * IMPORTANT: tileUrl must come from a CORS-enabled tile provider (or canvas will be tainted).
+ */
+export async function geojsonToPNG_MapCapture(fc, opts = {}) {
+  const { width = 1200, height = 800, fitBounds = true,
+          tileUrl = 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
+          tileOptions = {}, nameField } = opts;
+  if (!fc || fc.type !== 'FeatureCollection') throw new Error('Expected GeoJSON FeatureCollection');
+
+  // create offscreen container
+  const container = document.createElement('div');
+  container.style.position = 'fixed';
+  container.style.left = '-9999px';
+  container.style.top = '-9999px';
+  container.style.width = `${width}px`;
+  container.style.height = `${height}px`;
+  document.body.appendChild(container);
+
+  try {
+    if (!window.L) throw new Error('Leaflet (window.L) is required for map capture.');
+
+    const map = window.L.map(container, { zoomControl: false, attributionControl: false, interactive: false }).setView([0,0], 2);
+
+    // Ensure crossOrigin where possible; html2canvas will attempt useCORS
+    const tileLayer = window.L.tileLayer(tileUrl, { ...tileOptions, maxZoom: 19 });
+    tileLayer.addTo(map);
+
+    const geojsonLayer = window.L.geoJSON(fc, {
+      style: () => ({ color: '#2b8cbe', weight: 2, fillOpacity: 0.25 }),
+      pointToLayer: (f, latlng) => window.L.circleMarker(latlng, { radius: 5 })
+    }).addTo(map);
+
+    if (fitBounds && geojsonLayer.getBounds && geojsonLayer.getBounds().isValid && !geojsonLayer.getBounds().isValid()) {
+      map.setView([0,0], 2);
+    } else if (fitBounds && geojsonLayer.getBounds) {
+      try { map.fitBounds(geojsonLayer.getBounds(), { padding: [20,20] }); } catch(e) {}
+    }
+
+    // Wait some time for tiles to load. Increase if slow connections.
+    await new Promise(res => setTimeout(res, 900));
+
+    // capture with html2canvas. useCORS helps but requires tile server CORS.
+    const canvas = await html2canvas(container, { useCORS: true, backgroundColor: null, scale: 1 });
+
+    // toBlob may be null if canvas tainted -> handle explicitly
+    const blob = await new Promise((resolve, reject) => {
+      canvas.toBlob((b) => {
+        if (!b) reject(new Error('Canvas capture produced null blob. Canvas may be tainted by cross-origin tiles.'));
+        else resolve(b);
+      }, 'image/png');
+    });
+
+    const filename = `${sanitizeName((fc.metadata && fc.metadata.name) || nameField || 'map_export')}.png`;
+    map.remove();
+    return { blob, filename };
+  } finally {
+    try { document.body.removeChild(container); } catch(e) {}
+  }
+}
 /**
  * Escape CSV cell
  */
+function sanitizeName(name){ return (name||'export').replace(/\s+/g,'_').replace(/[\\\/:*?"<>|]/g,'').slice(0,120); }
 function escapeCsvCell(v) {
   if (v === null || v === undefined) return '';
   const s = String(v);

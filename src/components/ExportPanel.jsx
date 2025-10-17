@@ -3,7 +3,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import ReactDOM from 'react-dom';
 import JSZip from 'jszip'; // if not already imported
 import { csvToGeoJSON, kmzToGeoJSON,  gpxToGeoJSON, shapefileToGeoJSON} from './converters/fromFiles';
-import { geojsonToCSV, geojsonToKMZ, geojsonToKML, geojsonToGPX, geojsonToShapefile } from './converters/geojsonConverters';
+import { geojsonToCSV, geojsonToKMZ, geojsonToKML, geojsonToGPX, geojsonToShapefile, geojsonToPNG_MapCapture, geojsonToPNG_SVG } from './converters/geojsonConverters';
 import shp from 'shpjs';
 
 
@@ -102,7 +102,7 @@ export default function ExportPanel({
   }
 
   const getFileExtension = (format) => {
-    const map = { geojson: 'geojson', shapefile: 'zip', kml: 'kml', kmz: 'kmz', gpx: 'gpx', csv: 'csv', excel: 'xlsx', geotiff: 'tif', 'autocad-dxf': 'dxf', geopackage: 'gpkg', topojson: 'topojson', svg: 'svg', wkt: 'wkt' };
+    const map = { geojson: 'geojson', png: 'png', shapefile: 'zip', kml: 'kml', kmz: 'kmz', gpx: 'gpx', csv: 'csv', excel: 'xlsx', geotiff: 'tif', 'autocad-dxf': 'dxf', geopackage: 'gpkg', topojson: 'topojson', svg: 'svg', wkt: 'wkt' };
     return map[format] || 'zip';
   };
 
@@ -550,7 +550,17 @@ async function resolveGeoJSONForExport(dataset) {
                 const fc = await resolveGeoJSONForExport(selectedDataset)
                 const filename = await exportCSV(fc);
                 console.log('[ExportPanel] exportCSV returned filename:', filename);
-              } else if (exportConfig.format === 'kml') {
+              } 
+              else if (exportConfig.format === 'png') {
+                const fc = await resolveGeoJSONForExport(selectedDataset);
+                console.log(fc)
+                const {blob, filename} = await geojsonToPNG_SVG(fc, {width: 1400, height: 900});
+                console.log('[ExportPanel] after converter result', { filename, blob });
+
+
+                createAndDownload( filename, blob);
+              }
+              else if (exportConfig.format === 'kml') {
                 try {
                   const fc = await resolveGeoJSONForExport(selectedDataset);
                   const { kmlText, filename } = geojsonToKML(fc);
@@ -793,7 +803,7 @@ const panel = (
           <option value="gpx">.gpx</option>
         {/* </optgroup>
         <optgroup label="Tabular"> */}
-          <option value="csv">.csv</option><option value="excel">.xlsx</option>
+          <option value="csv">.csv</option><option value="excel">.xlsx</option><option value="png">.png</option>
           {/* </optgroup>
         <optgroup label="Raster/CAD"> */}
         <option value="geotiff">.tif</option><option value="autocad-dxf">.dxf</option>
