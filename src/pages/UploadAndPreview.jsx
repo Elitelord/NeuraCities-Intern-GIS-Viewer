@@ -4,6 +4,7 @@ import MapWorkspace from "../components/MapWorkspace";
 import UploadDropzone from "../components/UploadDropzone";
 import PreviewRouter from "../components/PreviewRouter";
 import ExportPanel from "../components/ExportPanel";
+import FloatingToolbar from "../components/FloatingToolbar";
 
 const uid = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 const keyFor = (d) => (d ? d._id : null);
@@ -19,12 +20,12 @@ export default function UploadAndPreview() {
   const [fcMap, setFcMap] = useState({});       // id -> FeatureCollection
   const activeKey = useMemo(() => keyFor(active), [active]);
 
+  const hasData = datasets.length > 0;
+
   // Pick first dataset once uploaded
   useEffect(() => {
     if (datasets.length && !active) setActive(datasets[0]);
   }, [datasets, active]);
-
-  const hasData = datasets.length > 0;
 
   // Append new datasets (assign stable _id)
   const appendDatasets = (newOnes) => {
@@ -108,11 +109,25 @@ export default function UploadAndPreview() {
   const activeForMap = active && activeGeoJSON ? { ...active, geojson: activeGeoJSON } : null;
 
   return (
-    <div className="workspace">
-      <div className="map-root">
+    <div className="workspace" style={{ position: "relative", height: "100vh" }}>
+      {/* Left legend + style controls */}
+      {hasData && (
+        <FloatingToolbar
+          datasets={datasets}
+          active={active}
+          onSelect={setActive}
+          onAddNew={() => setIsAddOpen(true)}
+          onExport={() => setIsExportOpen(true)}
+          onRemove={removeDataset}
+        />
+      )}
+
+      {/* Map */}
+      <div className="map-root" style={{ position: "absolute", inset: 0, zIndex: 1 }}>
         <MapWorkspace active={activeForMap} styleOptions={activeStyle} />
       </div>
 
+      {/* Initial upload overlay */}
       {!hasData && (
         <div className="upload-overlay">
           <div className="upload-card">
@@ -121,59 +136,19 @@ export default function UploadAndPreview() {
         </div>
       )}
 
-      {hasData && (
-        <div className="mini-toolbar">
-          <div className="toolbar-section">
-            <div className="toolbar-title">Datasets</div>
-            <div className="toolbar-list">
-              {datasets.map((d) => {
-                const isActive = activeKey === d._id;
-                return (
-                  <div
-                    key={d._id}
-                    className={"toolbar-item-row " + (isActive ? "is-active" : "")}
-                    title={`${d.label} — ${d.kind}`}
-                  >
-                    <button
-                      className={"toolbar-item " + (isActive ? "is-active" : "")}
-                      onClick={() => setActive(d)}
-                    >
-                      {d.label} — {d.kind}
-                    </button>
-                    <button
-                      className="toolbar-icon"
-                      aria-label={`Remove ${d.label}`}
-                      onClick={() => removeDataset(d)}
-                      title="Remove dataset"
-                    >
-                      ×
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          <div className="toolbar-section">
-            <div className="toolbar-title">Actions</div>
-            <div style={{ display: "grid", gap: 8 }}>
-              <button className="btn" onClick={() => setIsAddOpen(true)}>Add data…</button>
-              <button className="btn" onClick={() => setIsExportOpen(true)}>Export…</button>
-            </div>
-          </div>
+      {/* Preview: parses to FC and returns with the dataset id */}
+      {hasData && active && (
+        <div style={{ position: "absolute", right: 0, top: 0, zIndex: 2 }}>
+          <PreviewRouter
+            dataset={active}
+            onGeoJSONReady={({ datasetId, geojson }) => {
+              setFcMap((prev) => ({ ...prev, [datasetId]: geojson }));
+            }}
+          />
         </div>
       )}
 
-      {/* Preview: parses to FC and returns with the dataset id */}
-      {hasData && active && (
-        <PreviewRouter
-          dataset={active}
-          onGeoJSONReady={({ datasetId, geojson }) => {
-            setFcMap((prev) => ({ ...prev, [datasetId]: geojson }));
-          }}
-        />
-      )}
-
+      {/* Export modal/panel (unchanged) */}
       <ExportPanel
         datasets={datasets}
         selectedDataset={active}
@@ -182,6 +157,7 @@ export default function UploadAndPreview() {
         onClose={() => setIsExportOpen(false)}
       />
 
+      {/* Add modal using the same dropzone */}
       {isAddOpen && (
         <div className="upload-overlay" aria-label="Add dataset overlay">
           <div className="upload-card">
