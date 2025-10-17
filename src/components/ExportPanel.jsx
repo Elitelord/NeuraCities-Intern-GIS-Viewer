@@ -622,83 +622,150 @@ async function resolveGeoJSONForExport(dataset) {
 
   if (!isOpen) return null;
 
-  const panel = (
-    <>
-      <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.35)', zIndex: 2147483600 }} onClick={onClose} aria-hidden="true" />
-      <aside role="dialog" aria-modal="true" style={{ position: 'fixed', right: 0, top: 0, height: '100%', width: '100%', maxWidth: '520px', background: '#fff', zIndex: 2147483647, boxShadow: 'rgba(0,0,0,0.35) 0px 8px 40px', overflow: 'auto', pointerEvents: 'auto' }}>
-        <div style={{ padding: 20, minHeight: '100%', display: 'flex', flexDirection: 'column' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-            <div>
-              <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700 }}>Convert & Export</h2>
-              <p style={{ marginTop: 6, color: '#6b7280' }}>Choose output format and settings</p>
-            </div>
-            <div>
-              <button onClick={() => { onClose(); }} className = "btn" >Close</button>
-            </div>
+const panel = (
+  <>
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        backgroundColor: 'rgba(0,0,0,0.35)',
+        zIndex: 2147483600
+      }}
+      onClick={onClose}
+      aria-hidden="true"
+    />
+    <aside
+      role="dialog"
+      aria-modal="true"
+      style={{
+        position: 'fixed',
+        top: '50%',
+        left: '50%',
+        transform: 'translate(-50%, -50%)',
+        height: 'auto',
+        maxHeight: '85vh',
+        width: '100%',
+        maxWidth: '520px',
+        background: '#fff',
+        zIndex: 2147483647,
+        boxShadow: 'rgba(0,0,0,0.35) 0px 8px 40px',
+        overflow: 'auto',
+        pointerEvents: 'auto',
+        borderRadius: 12
+      }}
+    >
+      <div
+        style={{
+          padding: 20,
+          minHeight: '100%',
+          display: 'flex',
+          flexDirection: 'column'
+        }}
+      >
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'flex-start'
+          }}
+        >
+          <div>
+            <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700 }}>
+              Convert & Export
+            </h2>
+            <p style={{ marginTop: 6, color: '#6b7280' }}>
+              Choose output format and settings
+            </p>
           </div>
+          <div>
+            <button onClick={() => { onClose(); }} className="btn">
+              Close
+            </button>
+          </div>
+        </div>
 
+        {/* 🔹 Aligned CRS and Dataset selectors */}
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: '1fr 1fr',
+            gap: 12,
+            marginTop: 8,
+            alignItems: 'end'
+          }}
+        >
           <div style={{ marginTop: 16 }}>
-            <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: '#374151', marginBottom: 8 }}>Select Dataset to Export</label>
-            <select value={datasets.indexOf(selectedDataset)} onChange={(e) => onSelectDataset(datasets[parseInt(e.target.value, 10)])} style={{ width: '100%', padding: '10px', borderRadius: 8, border: '1px solid #e5e7eb' }}>
-              {datasets.map((d, i) => <option key={i} value={i}>{d.label} ({d.kind || 'unknown'}) - {d.size ? `${(d.size/1024).toFixed(1)} KB` : '—'}</option>)}
+            <label
+              style={{
+                display: 'block',
+                fontSize: 13,
+                fontWeight: 600,
+                color: '#374151',
+                marginBottom: 8
+              }}
+            >
+              Select Dataset to Export
+            </label>
+            <select
+              value={datasets.indexOf(selectedDataset)}
+              onChange={(e) =>
+                onSelectDataset(datasets[parseInt(e.target.value, 10)])
+              }
+              style={{
+                width: '100%',
+                padding: '10px',
+                borderRadius: 8,
+                border: '1px solid #e5e7eb'
+              }}
+            >
+              {datasets.map((d, i) => (
+                <option key={i} value={i}>
+                  {d.label} ({d.kind || 'unknown'})
+                  {/* {d.size ? `${(d.size / 1024).toFixed(1)} KB` : '—'} */}
+                </option>
+              ))}
             </select>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 16 }}>
-            <div>
-              <label style={{ display: 'block', fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Output Format</label>
-              <select value={exportConfig.format} onChange={(e) => setExportConfig({ ...exportConfig, format: e.target.value })} style={{ width: '100%', padding: '10px', borderRadius: 8, border: '1px solid #e5e7eb' }}>
-                <optgroup label="Vector">
-+                  <option value="geojson">GeoJSON (.geojson)</option>
-+                  <option value="shapefile">Shapefile (.zip)</option>
-+                  <option value="kml">KML (.kml)</option>
-+                  <option value="gpx">GPX (.gpx)</option>
-+                </optgroup>
-                <optgroup label="Tabular"><option value="csv">CSV (.csv)</option><option value="excel">Excel (.xlsx)</option></optgroup>
-                <optgroup label="Raster/CAD"><option value="geotiff">GeoTIFF (.tif)</option><option value="autocad-dxf">DXF (.dxf)</option></optgroup>
-                
-              </select>
-            </div>
-
-            <div>
-              <label style={{ display: 'block', fontSize: 13, fontWeight: 600, marginBottom: 8 }}>CRS</label>
-              <select value={exportConfig.crs} onChange={(e) => setExportConfig({ ...exportConfig, crs: e.target.value })} style={{ width: '100%', padding: '10px', borderRadius: 8, border: '1px solid #e5e7eb' }}>
-                <option value="EPSG:4326">WGS84 (EPSG:4326)</option>
-                <option value="EPSG:3857">Web Mercator (EPSG:3857)</option>
-                <option value="EPSG:32633">UTM 33N</option>
-              </select>
-            </div>
-          </div>
-
-          <div style={{ marginTop: 16, borderTop: '1px solid #eef2f7', paddingTop: 16 }}>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <input type="checkbox" checked={exportConfig.includeMetadata} onChange={(e) => setExportConfig({ ...exportConfig, includeMetadata: e.target.checked })} />
-              <span style={{ fontSize: 13 }}>Include metadata</span>
+          <div style={{ marginTop: 16 }}>
+            <label
+              style={{
+                display: 'block',
+                fontSize: 13,
+                fontWeight: 600,
+                marginBottom: 8,
+                color: '#374151'
+              }}
+            >
+              CRS
             </label>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 }}>
-              <input type="checkbox" checked={exportConfig.simplifyGeometry} onChange={(e) => setExportConfig({ ...exportConfig, simplifyGeometry: e.target.checked })} />
-              <span style={{ fontSize: 13 }}>Simplify geometry</span>
-            </label>
+            <select
+              value={exportConfig.crs}
+              onChange={(e) =>
+                setExportConfig({ ...exportConfig, crs: e.target.value })
+              }
+              style={{
+                width: '100%',
+                padding: '10px',
+                borderRadius: 8,
+                border: '1px solid #e5e7eb'
+              }}
+            >
+              <option value="EPSG:4326">WGS84 (EPSG:4326)</option>
+              <option value="EPSG:3857">Web Mercator (EPSG:3857)</option>
+              <option value="EPSG:32633">UTM 33N</option>
+            </select>
           </div>
+        </div>
 
-          <div style={{ marginTop: 18 }}>
-            <button onClick={handleExport} disabled={!selectedDataset || exporting} style={{ width: '100%', padding: '12px 14px', borderRadius: 10, border: 'none', background: exporting ? '#94d3ca' : '#0d9488', color: '#fff', fontWeight: 700 }}>
-              {exporting ? `Converting... ${exportProgress}%` : exportSuccess ? 'Export Complete!' : 'Convert & Download'}
-            </button>
+      
 
-            {exporting && <div style={{ marginTop: 12 }}><div style={{ height: 8, background: '#eaeef0', borderRadius: 999 }}><div style={{ height: 8, width: `${exportProgress}%`, background: '#0d9488', borderRadius: 999, transition: 'width .2s linear' }} /></div><div style={{ fontSize: 12, color: '#6b7280', marginTop: 6 }}>Preparing your file — please wait</div></div>}
-
-            {downloadError && <div style={{ marginTop: 12, color: '#b91c1c', fontSize: 13 }}>{downloadError}</div>}
-            {exportSuccess && !downloadError && <div style={{ marginTop: 12, color: '#065f46', fontSize: 13 }}>Export succeeded — check your downloads.</div>}
-          </div>
-
-          {/* filename editor: fixed prefix + editable middle + extension */}
-          <div style={{ marginTop: 14, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+           <div style={{ marginTop: 14, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             <label style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%' }}>
               <div style={{ fontSize: 13, fontWeight: 600, color: '#374151' }}>Filename</div>
             </label>
-
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%' }}>
+        
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, width: '130%' }}>
               <span style={{ background: '#f3f4f6', padding: '8px 10px', borderRadius: 8, border: '1px solid #e5e7eb', color: '#374151', fontSize: 13 }}>{FIXED_PREFIX}</span>
               <input
                 type="text"
@@ -708,25 +775,66 @@ async function resolveGeoJSONForExport(dataset) {
                 style={{ flex: 1, padding: '10px', borderRadius: 8, border: '1px solid #e5e7eb', minWidth: 120 }}
                 aria-label="Filename (without prefix or extension)"
               />
-              <span style={{ padding: '8px 10px', borderRadius: 8, border: '1px solid #e5e7eb', background: '#fafafa', fontSize: 13 }}>.{getFileExtension(exportConfig.format)}</span>
+              {/* <span style={{ padding: '8px 10px', borderRadius: 8, border: '1px solid #e5e7eb', background: '#fafafa', fontSize: 13 }}>.{getFileExtension(exportConfig.format)}</span> */}
+            
+            <div>
+              {/* <label style={{ display: 'block', fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Output Format</label> */}
+              <select value={exportConfig.format} onChange={(e) => setExportConfig({ ...exportConfig, format: e.target.value })} style={{ width: '100%', padding: '10px', borderRadius: 8, border: '1px solid #e5e7eb' }}>
+                {/* <optgroup label="Vector"> */}
++                  <option value="geojson">.geojson</option>
++                  <option value="shapefile">.zip</option>
++                  <option value="kml">.kml</option>
++                  <option value="gpx">.gpx</option>
+{/* +                </optgroup>
+                <optgroup label="Tabular"> */}
+                  <option value="csv">.csv</option><option value="excel">.xlsx</option>
+                  {/* </optgroup>
+                <optgroup label="Raster/CAD"> */}
+                <option value="geotiff">.tif</option><option value="autocad-dxf">.dxf</option>
+                {/* </optgroup> */}
+                
+              </select>
             </div>
+            </div>
+          
+            
+          {/* <div style={{ marginTop: 16, borderTop: '1px solid #eef2f7', paddingTop: 16 }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <input type="checkbox" checked={exportConfig.includeMetadata} onChange={(e) => setExportConfig({ ...exportConfig, includeMetadata: e.target.checked })} />
+              <span style={{ fontSize: 13 }}>Include metadata</span>
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 }}>
+              <input type="checkbox" checked={exportConfig.simplifyGeometry} onChange={(e) => setExportConfig({ ...exportConfig, simplifyGeometry: e.target.checked })} />
+              <span style={{ fontSize: 13 }}>Simplify geometry</span>
+            </label>
+          </div> */}
 
-            <div style={{ width: '100%', fontSize: 12, color: '#6b7280' }}>
-              Final filename will be: <strong>{FIXED_PREFIX}{sanitizeFilename(userFilename) || sanitizeFilename(selectedDataset?.label || 'dataset')}.{getFileExtension(exportConfig.format)}</strong>
-            </div>
+          <div style={{ marginTop: 18 }}>
+            <button onClick={handleExport} disabled={!selectedDataset || exporting} style={{ width: '100%', padding: '12px 14px', borderRadius: 10, border: 'none', background: exporting ? '#94d3ca' : '#0d9488', color: '#fff', fontWeight: 700 }}>
+              {exporting ? `Converting... ${exportProgress}%` : exportSuccess ? 'Export Complete!' : 'Convert & Download'}
+            </button>
+
+            {exporting && <div style={{ marginTop: 12 }}><div style={{ height: 8, background: '#eaeef0', borderRadius: 999 }}><div style={{ height: 8, width: `${exportProgress}%`, background: '#0d9488', borderRadius: 999, transition: 'width .2s linear' }} /></div><div style={{ fontSize: 12, color: '#6b7280', marginTop: 6 }}>Preparing your file — please wait</div></div>}
+
+            {downloadError && <div style={{ marginTop: 12, color: '#b91c1c', fontSize: 13 }}>{downloadError}</div>}
+            {/* {exportSuccess && !downloadError && <div style={{ marginTop: 12, color: '#065f46', fontSize: 13 }}>Export succeeded — check your downloads.</div>} */}
+          </div>
+
+          {/* filename editor: fixed prefix + editable middle + extension */}
+          
           </div>
 
           {/* view / manual download */}
-          {lastBlobUrl && lastFilename && (
+          {/* {lastBlobUrl && lastFilename && (
             <div style={{ marginTop: 14, display: 'flex', gap: 8, alignItems: 'center' }}>
               <a href={lastBlobUrl} download={lastFilename} className='btn' style={{ display: 'inline-block', textDecoration: 'none' }}>
                 Download
               </a>
               <button onClick={() => { revokeLastBlob(); setDownloadError(null); }} title="Clear generated file" className='btn'>Clear</button>
             </div>
-          )}
+          )} */}
 
-          <div style={{ marginTop: 16, color: '#6b7280', fontSize: 12 }}>
+          {/* <div style={{ marginTop: 16, color: '#6b7280', fontSize: 12 }}>
             <div><strong>Dataset:</strong> {selectedDataset?.label || 'None selected'}</div>
             <div style={{ marginTop: 6 }}><strong>Format:</strong> {exportConfig.format.toUpperCase()}</div>
             <div style={{ marginTop: 6 }}><strong>CRS:</strong> {exportConfig.crs}</div>
@@ -734,7 +842,7 @@ async function resolveGeoJSONForExport(dataset) {
 
           <div style={{ marginTop: 18, fontSize: 11, color: '#6b7280' }}>
             <strong>Note:</strong> Client-side export supports GeoJSON and CSV. For shapefile/geopackage, integrate `shp-write` / `JSZip` or do server-side conversion.
-          </div>
+          </div> */}
         </div>
       </aside>
     </>
