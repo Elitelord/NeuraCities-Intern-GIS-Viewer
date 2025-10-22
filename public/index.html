@@ -6,6 +6,15 @@
     <title>NeuraCities GIS Viewer</title>
     <!-- Optional: favicon -->
     <link rel="icon" href="%PUBLIC_URL%/favicon.ico" />
+    <!-- geotiff and georaster UMD -->
+    <!-- geotiff (needed by georaster) -->
+    <script src="https://unpkg.com/geotiff@2.1.4-beta.0/dist-browser/geotiff.js"></script>
+
+    <!-- georaster UMD (provides parseGeoraster) -->
+    <script src="https://unpkg.com/georaster@1.6.0/dist/georaster.browser.bundle.min.js"></script>
+
+    <!-- georaster-layer-for-leaflet UMD (provides GeoRasterLayer) -->
+    <script src="https://unpkg.com/georaster-layer-for-leaflet@4.1.2/dist/v3/webpack/bundle/georaster-layer-for-leaflet.min.js"></script>
   </head>
   <body>
     <noscript>You need to enable JavaScript to run this app.</noscript>

@@ -62,7 +62,7 @@ export default function MapWorkspace({ datasets = [], active = null, styleOption
       attributionControl: false,
     });
     mapRef.current = map;
-
+    window.map = map;
     const osm = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
       maxZoom: 19,
       attribution: "",

@@ -14,19 +14,28 @@ import {
   // (you can import shapefileToGeoJSON if you ever want to convert in-router)
 } from './converters/fromFiles';
 
+// <-- NEW imports for raster support -->
+import { geotiffToRaster } from './converters/rasterConverters';
+import RasterPreview from './rasterPreview';
+
 /**
  * PreviewRouter
  * - Centralized conversion to GeoJSON for CSV / KML / KMZ / GPX using shared converters.
  * - Emits converted FeatureCollection via onGeoJSONReady.
  * - Renders GeoJsonPreview for converted content (passes a Blob/File).
  * - Falls back to original per-format preview components where that UX is better (e.g., shapefile, Excel).
+ *
+ * New: accepts optional `map` prop (Leaflet map instance). If provided, it will be forwarded
+ * to RasterPreview; otherwise RasterPreview will use window.map as a fallback.
  */
-export default function PreviewRouter({ dataset, onGeoJSONReady, onStyleChange }) {
+export default function PreviewRouter({ dataset, onGeoJSONReady, onStyleChange, map }) {
   const [readyFile, setReadyFile] = useState(null);     // Blob/File for GeoJsonPreview
   const [status, setStatus] = useState('idle');         // 'idle' | 'prepping' | 'error'
   const [error, setError] = useState(null);
   const [shapefileAttempted, setShapefileAttempted] = useState(false);
 
+  // <-- NEW state to hold raster preview dataset -->
+  const [rasterDataset, setRasterDataset] = useState(null);
 
   if (!dataset) return null;
 
@@ -52,20 +61,25 @@ export default function PreviewRouter({ dataset, onGeoJSONReady, onStyleChange }
 
   useEffect(() => {
     let mounted = true;
+
+    // Clear states on dataset change
     setReadyFile(null);
+    setRasterDataset(null);
     setError(null);
     setStatus('idle');
+    setShapefileAttempted(false);
 
     if (!dataset) return;
+
     const keyFile = dataset.files?.[0];
     const label = dataset.label || (keyFile?.name ?? 'dataset');
 
     const prepareFromGeoJSON = (fc) => {
       if (!mounted) return;
       const blob = toGeoJSONBlob(fc, label);
-       
+
       setReadyFile(blob);
-      
+
       emitFC({ label, geojson: fc });
       setStatus('idle');
     };
@@ -77,6 +91,25 @@ export default function PreviewRouter({ dataset, onGeoJSONReady, onStyleChange }
         if (dataset.geojson?.type === 'FeatureCollection') {
           prepareFromGeoJSON(dataset.geojson);
           return;
+        }
+
+        // ---------- NEW: Detect TIFF/GeoTIFF and create rasterDataset ----------
+        // Accept either dataset.kind indicating raster, or file extension on keyFile
+        const name = keyFile?.name?.toLowerCase?.() || '';
+        const looksLikeTiff = /\.(tif|tiff)$/i.test(name) || /(tif|tiff|geotiff|raster)/i.test(dataset.kind || '');
+        if (looksLikeTiff && keyFile) {
+          try {
+            const rd = await geotiffToRaster(keyFile);
+            if (!mounted) return;
+            // rd should be { kind: 'raster', metadata, previewBlob, rawBlob }
+            setRasterDataset(rd);
+            setStatus('idle');
+            return; // raster path ends here (no GeoJSON produced)
+          } catch (err) {
+            // If geotiff parsing fails, fall back to other behavior below (e.g., show generic message)
+            console.error('[PreviewRouter] geotiff parse error', err);
+            // continue to other handlers / fallbacks
+          }
         }
 
         // 1) Pass-through raw GeoJSON/JSON file (let GeoJsonPreview parse/validate)
@@ -122,26 +155,23 @@ export default function PreviewRouter({ dataset, onGeoJSONReady, onStyleChange }
           prepareFromGeoJSON(fc);
           return;
         }
-        
-        // 7) Shapefile -> keep dedicated preview (progress, messages)
-// handled below in switch()
-if ((dataset.kind === 'shapefile' || dataset.kind === 'zip') && keyFile) {
-  // mark that we attempted conversion (so fallback won't mount until this finished)
-  setShapefileAttempted(true);
 
-  try {
-   
-    const fc = await shapefileToGeoJSON(dataset.files);
-    
-    prepareFromGeoJSON(fc);
-    return; 
-  } catch (err) {
-    console.error('[Shapefile] parse error', err);
-    if (mounted) setStatus('idle');
-    // and then return so we don't continue with the rest of run()
-    return;
-  }
-}
+        // 7) Shapefile -> keep dedicated preview (progress, messages)
+        if ((dataset.kind === 'shapefile' || dataset.kind === 'zip') && keyFile) {
+          // mark that we attempted conversion (so fallback won't mount until this finished)
+          setShapefileAttempted(true);
+
+          try {
+            const fc = await shapefileToGeoJSON(dataset.files);
+            prepareFromGeoJSON(fc);
+            return;
+          } catch (err) {
+            console.error('[Shapefile] parse error', err);
+            if (mounted) setStatus('idle');
+            // and then return so we don't continue with the rest of run()
+            return;
+          }
+        }
 
         // 8) Unknown or other kinds → let fallbacks handle
         setStatus('idle');
@@ -155,7 +185,7 @@ if ((dataset.kind === 'shapefile' || dataset.kind === 'zip') && keyFile) {
 
     run();
     return () => { mounted = false; };
-  }, [dataset]);
+  }, [dataset, map]);
 
   // Re-mount previews when dataset identity/kind changes
   const k = `${dataset?.label || 'dataset'}::${dataset?.kind || 'unknown'}`;
@@ -173,6 +203,19 @@ if ((dataset.kind === 'shapefile' || dataset.kind === 'zip') && keyFile) {
     return <div style={{ padding: 14 }}>Preparing preview…</div>;
   }
 
+  // ---------- NEW: If we produced a rasterDataset, show RasterPreview (pass map prop) ----------
+  if (rasterDataset) {
+    return (
+      <RasterPreview
+        key={k}
+        dataset={rasterDataset}
+        map={map || (typeof window !== 'undefined' ? window.map : null)}
+        // optional props: allow RasterPreview to emit events or offer server upload
+        // onExport={(opts) => ... }
+      />
+    );
+  }
+
   // If we produced a GeoJSON blob/file, show the unified GeoJSON preview
   if (readyFile) {
     return (
@@ -188,20 +231,6 @@ if ((dataset.kind === 'shapefile' || dataset.kind === 'zip') && keyFile) {
 
   // Fallbacks (formats we didn't convert here or want dedicated UX for)
   switch (dataset.kind) {
-//     case 'shapefile':
-//   // If we haven't attempted conversion yet, show "Preparing" (avoid mounting fallback parser)
-//   if (!shapefileAttempted && status === 'prepping') {
-    
-//   }
-//   else {
-//   return (
-//     <ShapefilePreview
-//       key={k}
-//       files={dataset.files}
-//       onConvert={(fc) => emitFC({ label: dataset.label, geojson: fc })}
-//     />
-//   );
-// }
     case 'excel':
       return (
         <CsvExcelPreview

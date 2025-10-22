@@ -366,6 +366,15 @@ async function resolveGeoJSONForExport(dataset) {
             return null;
           }
         }
+        else if (dataset.kind === 'shapefile') {
+          try {
+            fc = await shapefileToGeoJSON(file);
+
+          } catch(err) {
+            console.error('[ExportPanel] shapefiletoGeoJSON failed', err);
+            setDownloadError('Shapefile -> geoJson conversion failed: ' + (err.message || err));
+          }
+        }
         else {
           console.warn('[ExportPanel] No on-demand converter for dataset kind:', dataset.kind, file && file.name);
           setDownloadError('No on-demand converter available for this file type.');
@@ -554,7 +563,13 @@ async function resolveGeoJSONForExport(dataset) {
               else if (exportConfig.format === 'png') {
                 const fc = await resolveGeoJSONForExport(selectedDataset);
                 console.log(fc)
-                const {blob, filename} = await geojsonToPNG_SVG(fc, {width: 1400, height: 900});
+                const {blob, filename} = await geojsonToPNG_MapCapture(fc, {
+                width: 1400,
+                height: 900,
+                tileUrl: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
+                tileLoadTimeout: 5000,
+                nameField: selectedDataset.name
+              });
                 console.log('[ExportPanel] after converter result', { filename, blob });
 
 
@@ -574,16 +589,15 @@ async function resolveGeoJSONForExport(dataset) {
                 }
               }
               else if (exportConfig.format === 'shapefile') {
-          try {
-            const fc = await resolveGeoJSONForExport(selectedDataset)
-    const maybe = await geojsonToShapefile(fc);
-    // if function returned a promise that resolved to object, 'maybe' will be {blob, filename}
-    const { blob, filename: returnedName } = await Promise.resolve(maybe);
-    createAndDownload(buildFilename('zip'), blob);
-  } catch (err) {
-    setDownloadError('Shapefile export failed: ' + (err?.message || err));
-  }
-}
+                try {
+                  const fc = await resolveGeoJSONForExport(selectedDataset);
+                  const { blob, filename: returnedName } = await geojsonToShapefile(fc);
+                  createAndDownload(buildFilename('zip'), blob);
+                } catch (err) {
+                  setDownloadError('Shapefile export failed: ' + (err?.message || err));
+                  console.error('Shapefile export failed', err);
+                }
+              }
               else if (exportConfig.format === 'kmz') {
                 const filename = await Promise.resolve(exportKMZ(selectedDataset));
                 console.log('[ExportPanel] exportKMZ returned filename:', filename);
@@ -644,213 +658,238 @@ const panel = (
       onClick={onClose}
       aria-hidden="true"
     />
-    <style>{`
-  @keyframes fadeIn {
-    from { opacity: 0; transform: translate(-50%, -48%); }
-    to   { opacity: 1; transform: translate(-50%, -50%); }
-  }
-`}</style>
-   <aside
-  role="dialog"
-  aria-modal="true"
-  style={{
-    position: 'fixed',
-    top: '50%',
-    left: '50%',
-    transform: 'translate(-50%, -50%)',
-    height: 'auto',
-    maxHeight: '85vh',
-    width: '100%',
-    maxWidth: '520px',
-    background: '#fff',
-    zIndex: 2147483647,
-    boxShadow: 'rgba(0,0,0,0.35) 0px 8px 40px',
-    overflow: 'auto',
-    pointerEvents: 'auto',
-    borderRadius: 12,
-    animation: 'fadeIn 180ms ease-out' // <-- fade-in
-  }}
->
-      <div
-        style={{
-          padding: 20,
-          minHeight: '100%',
-          display: 'flex',
-          flexDirection: 'column'
-        }}
-      >
+      <style>{`
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translate(-50%, -48%); }
+      to   { opacity: 1; transform: translate(-50%, -50%); }
+    }
+  `}</style>
+      <aside
+    role="dialog"
+    aria-modal="true"
+    style={{
+      position: 'fixed',
+      top: '50%',
+      left: '50%',
+      transform: 'translate(-50%, -50%)',
+      height: 'auto',
+      maxHeight: '85vh',
+      width: '100%',
+      maxWidth: '520px',
+      background: '#fff',
+      zIndex: 2147483647,
+      boxShadow: 'rgba(0,0,0,0.35) 0px 8px 40px',
+      overflow: 'auto',
+      pointerEvents: 'auto',
+      borderRadius: 12,
+      animation: 'fadeIn 180ms ease-out' // <-- fade-in
+    }}
+  >
         <div
           style={{
+            padding: 20,
+            minHeight: '100%',
             display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'flex-start'
+            flexDirection: 'column'
           }}
         >
-          <div  style = {{alignItems: 'center'}}>
-            <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700}}>
-              Convert & Export
-            </h2>
-        
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'flex-start'
+            }}
+          >
+            <div  style = {{alignItems: 'center'}}>
+              <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700}}>
+                Convert & Export
+              </h2>
+          
+            </div>
+            <div>
+              <button
+                onClick={onClose}
+                className="btn"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  width: '32px',
+                  height: '32px',
+                  padding: 0,
+                  borderRadius: '6px',
+                }}
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="18"
+                  height="18"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                >
+                  <path
+                    fillRule="evenodd"
+                    clipRule="evenodd"
+                    d="M5.29289 5.29289C5.68342 4.90237 6.31658 4.90237 6.70711 5.29289L12 10.5858L17.2929 5.29289C17.6834 4.90237 18.3166 4.90237 18.7071 5.29289C19.0976 5.68342 19.0976 6.31658 18.7071 6.70711L13.4142 12L18.7071 17.2929C19.0976 17.6834 19.0976 18.3166 18.7071 18.7071C18.3166 19.0976 17.6834 19.0976 17.2929 18.7071L12 13.4142L6.70711 18.7071C6.31658 19.0976 5.68342 19.0976 5.29289 18.7071C4.90237 18.3166 4.90237 17.6834 5.29289 17.2929L10.5858 12L5.29289 6.70711C4.90237 6.31658 4.90237 5.68342 5.29289 5.29289Z"
+                    fill="#0F1729"
+                  />
+                </svg>
+              </button>
+            </div>
           </div>
-          <div>
-            <button onClick={() => { onClose(); }} className="btn">
-              Close
-            </button>
-          </div>
-        </div>
 
-        {/* 🔹 Aligned CRS and Dataset selectors */}
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: '1fr 1fr',
-            gap: 12,
-            marginTop: 8,
-            alignItems: 'end'
-          }}
+          {/* 🔹 Aligned CRS and Dataset selectors */}
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: '1fr 1fr',
+              gap: 12,
+              marginTop: 8,
+              alignItems: 'end'
+            }}
+          >
+            <div style={{ marginTop: 16 }}>
+              <label
+                style={{
+                  display: 'block',
+                  fontSize: 13,
+                  fontWeight: 600,
+                  color: '#374151',
+                  marginBottom: 8
+                }}
+              >
+                Select Dataset to Export
+              </label>
+              <select
+                value={datasets.indexOf(selectedDataset)}
+                onChange={(e) =>
+                  onSelectDataset(datasets[parseInt(e.target.value, 10)])
+                }
+                style={{
+                  width: '100%',
+                  padding: '10px',
+                  borderRadius: 8,
+                  border: '1px solid #e5e7eb'
+                }}
+              >
+                {datasets.map((d, i) => (
+                  <option key={i} value={i}>
+                    {d.label} ({d.kind || 'unknown'})
+                    {/* {d.size ? `${(d.size / 1024).toFixed(1)} KB` : '—'} */}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div style={{ marginTop: 16 }}>
+              <label
+                style={{
+                  display: 'block',
+                  fontSize: 13,
+                  fontWeight: 600,
+                  marginBottom: 8,
+                  color: '#374151'
+                }}
+              >
+                CRS
+              </label>
+              <select
+                value={exportConfig.crs}
+                onChange={(e) =>
+                  setExportConfig({ ...exportConfig, crs: e.target.value })
+                }
+                style={{
+                  width: '100%',
+                  padding: '10px',
+                  borderRadius: 8,
+                  border: '1px solid #e5e7eb'
+                }}
+              >
+                <option value="EPSG:4326">WGS84 (EPSG:4326)</option>
+                <option value="EPSG:3857">Web Mercator (EPSG:3857)</option>
+                <option value="EPSG:32633">UTM 33N</option>
+              </select>
+            </div>
+          </div>
+
+        {/* filename editor: fixed prefix + editable middle + extension */}
+  <div style={{ marginTop: 14, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+    <label style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%' }}>
+      <div style={{ fontSize: 13, fontWeight: 600, color: '#374151' }}>Filename</div>
+    </label>
+
+    {/* wrapper that determines the "content width" to match for button + progress */}
+    <div style={{ width: '100%', boxSizing: 'border-box', display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', boxSizing: 'border-box' }}>
+        <span style={{ background: '#f3f4f6', padding: '8px 10px', borderRadius: 8, border: '1px solid #e5e7eb', color: '#374151', fontSize: 13 }}>{FIXED_PREFIX}</span>
+        <input
+          type="text"
+          value={userFilename}
+          onChange={(e) => setUserFilename(sanitizeFilename(e.target.value))}
+          placeholder={sanitizeFilename(selectedDataset?.label || 'dataset')}
+          style={{ flex: 1, padding: '10px', borderRadius: 8, border: '1px solid #e5e7eb', minWidth: 120, boxSizing: 'border-box' }}
+          aria-label="Filename (without prefix or extension)"
+        />
+        <select
+          value={exportConfig.format}
+          onChange={(e) => setExportConfig({ ...exportConfig, format: e.target.value })}
+          style={{ padding: '10px', borderRadius: 8, border: '1px solid #e5e7eb', background: '#fafafa', fontSize: 13, boxSizing: 'border-box' }}
         >
-          <div style={{ marginTop: 16 }}>
-            <label
-              style={{
-                display: 'block',
-                fontSize: 13,
-                fontWeight: 600,
-                color: '#374151',
-                marginBottom: 8
-              }}
-            >
-              Select Dataset to Export
-            </label>
-            <select
-              value={datasets.indexOf(selectedDataset)}
-              onChange={(e) =>
-                onSelectDataset(datasets[parseInt(e.target.value, 10)])
-              }
-              style={{
-                width: '100%',
-                padding: '10px',
-                borderRadius: 8,
-                border: '1px solid #e5e7eb'
-              }}
-            >
-              {datasets.map((d, i) => (
-                <option key={i} value={i}>
-                  {d.label} ({d.kind || 'unknown'})
-                  {/* {d.size ? `${(d.size / 1024).toFixed(1)} KB` : '—'} */}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div style={{ marginTop: 16 }}>
-            <label
-              style={{
-                display: 'block',
-                fontSize: 13,
-                fontWeight: 600,
-                marginBottom: 8,
-                color: '#374151'
-              }}
-            >
-              CRS
-            </label>
-            <select
-              value={exportConfig.crs}
-              onChange={(e) =>
-                setExportConfig({ ...exportConfig, crs: e.target.value })
-              }
-              style={{
-                width: '100%',
-                padding: '10px',
-                borderRadius: 8,
-                border: '1px solid #e5e7eb'
-              }}
-            >
-              <option value="EPSG:4326">WGS84 (EPSG:4326)</option>
-              <option value="EPSG:3857">Web Mercator (EPSG:3857)</option>
-              <option value="EPSG:32633">UTM 33N</option>
-            </select>
-          </div>
-        </div>
-
-      {/* filename editor: fixed prefix + editable middle + extension */}
-<div style={{ marginTop: 14, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-  <label style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%' }}>
-    <div style={{ fontSize: 13, fontWeight: 600, color: '#374151' }}>Filename</div>
-  </label>
-
-  {/* wrapper that determines the "content width" to match for button + progress */}
-  <div style={{ width: '100%', boxSizing: 'border-box', display: 'flex', flexDirection: 'column', gap: 8 }}>
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', boxSizing: 'border-box' }}>
-      <span style={{ background: '#f3f4f6', padding: '8px 10px', borderRadius: 8, border: '1px solid #e5e7eb', color: '#374151', fontSize: 13 }}>{FIXED_PREFIX}</span>
-      <input
-        type="text"
-        value={userFilename}
-        onChange={(e) => setUserFilename(sanitizeFilename(e.target.value))}
-        placeholder={sanitizeFilename(selectedDataset?.label || 'dataset')}
-        style={{ flex: 1, padding: '10px', borderRadius: 8, border: '1px solid #e5e7eb', minWidth: 120, boxSizing: 'border-box' }}
-        aria-label="Filename (without prefix or extension)"
-      />
-      <select
-        value={exportConfig.format}
-        onChange={(e) => setExportConfig({ ...exportConfig, format: e.target.value })}
-        style={{ padding: '10px', borderRadius: 8, border: '1px solid #e5e7eb', background: '#fafafa', fontSize: 13, boxSizing: 'border-box' }}
-      >
-        {/* <optgroup label="Vector"> */}
-          <option value="geojson">.geojson</option>
-          <option value="shapefile">.zip</option>
-          <option value="kml">.kml</option>
-          <option value="gpx">.gpx</option>
-        {/* </optgroup>
-        <optgroup label="Tabular"> */}
-          <option value="csv">.csv</option><option value="excel">.xlsx</option><option value="png">.png</option>
+          {/* <optgroup label="Vector"> */}
+            <option value="geojson">.geojson</option>
+            <option value="shapefile">.shp</option>
+            <option value="kml">.kml</option>
+            <option value="gpx">.gpx</option>
           {/* </optgroup>
-        <optgroup label="Raster/CAD"> */}
-        <option value="geotiff">.tif</option><option value="autocad-dxf">.dxf</option>
-        {/* </optgroup> */}
-      </select>
-    </div>
+          <optgroup label="Tabular"> */}
+            <option value="csv">.csv</option>
+            <option value="excel">.xlsx</option>
+            <option value="png">.png</option>
+            {/* </optgroup>
+          <optgroup label="Raster/CAD"> */}
+          <option value="geotiff">.tif</option>
+          {/* <option value="autocad-dxf">.dxf</option> */}
+          {/* </optgroup> */}
+        </select>
+      </div>
 
-    {/* Final filename preview — stays full width
-    <div style={{ width: '100%', fontSize: 12, color: '#6b7280' }}>
-      Final filename will be:&nbsp;
-      <strong>{FIXED_PREFIX}{sanitizeFilename(userFilename) || sanitizeFilename(selectedDataset?.label || 'dataset')}.{getFileExtension(exportConfig.format)}</strong>
-    </div> */}
+      {/* Final filename preview — stays full width
+      <div style={{ width: '100%', fontSize: 12, color: '#6b7280' }}>
+        Final filename will be:&nbsp;
+        <strong>{FIXED_PREFIX}{sanitizeFilename(userFilename) || sanitizeFilename(selectedDataset?.label || 'dataset')}.{getFileExtension(exportConfig.format)}</strong>
+      </div> */}
 
-    {/* export button + progress: use the same content width by stretching to 100% */}
-    <div style={{ marginTop: 6, width: '100%', boxSizing: 'border-box', display: 'flex', flexDirection: 'column', gap: 8 }}>
-      <button
-        onClick={handleExport}
-        disabled={!selectedDataset || exporting}
-        style={{
-          width: '100%',            // <-- matches filename width
-          alignSelf: 'stretch',     // ensure it stretches to the wrapper width
-          padding: '12px 14px',
-          borderRadius: 10,
-          border: 'none',
-          background: exporting ? '#94d3ca' : '#0d9488',
-          color: '#fff',
-          fontWeight: 700
-        }}
-      >
-        {exporting ? `Converting... ${exportProgress}%` : exportSuccess ? 'Export Complete!' : 'Convert & Download'}
-      </button>
+      {/* export button + progress: use the same content width by stretching to 100% */}
+      <div style={{ marginTop: 6, width: '100%', boxSizing: 'border-box', display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <button
+          onClick={handleExport}
+          disabled={!selectedDataset || exporting}
+          className='btn'
+          style={{
+            width: '100%',            // <-- matches filename width
+            alignSelf: 'stretch',     // ensure it stretches to the wrapper width
+            padding: '12px 14px',
+            borderRadius: 10
+          }}
+        >
+          {exporting ? `Converting... ${exportProgress}%` : exportSuccess ? 'Export Complete!' : 'Convert & Download'}
+        </button>
 
-      {exporting && (
-        <div style={{ marginTop: 0, width: '100%', boxSizing: 'border-box' }}>
-          <div style={{ height: 8, background: '#eaeef0', borderRadius: 999 }}>
-            <div style={{ height: 8, width: `${exportProgress}%`, background: '#0d9488', borderRadius: 999, transition: 'width .2s linear' }} />
+        {exporting && (
+          <div style={{ marginTop: 0, width: '100%', boxSizing: 'border-box' }}>
+            <div style={{ height: 8, background: '#eaeef0', borderRadius: 999 }}>
+              <div style={{ height: 8, width: `${exportProgress}%`, background: '#0d9488', borderRadius: 999, transition: 'width .2s linear' }} />
+            </div>
+            <div style={{ fontSize: 12, color: '#6b7280', marginTop: 6 }}>Preparing your file — please wait</div>
           </div>
-          <div style={{ fontSize: 12, color: '#6b7280', marginTop: 6 }}>Preparing your file — please wait</div>
-        </div>
-      )}
+        )}
 
-      {downloadError && <div style={{ marginTop: 0, color: '#b91c1c', fontSize: 13 }}>{downloadError}</div>}
-      {/* {exportSuccess && !downloadError && <div style={{ marginTop: 12, color: '#065f46', fontSize: 13 }}>Export succeeded — check your downloads.</div>} */}
+        {downloadError && <div style={{ marginTop: 0, color: '#b91c1c', fontSize: 13 }}>{downloadError}</div>}
+        {/* {exportSuccess && !downloadError && <div style={{ marginTop: 12, color: '#065f46', fontSize: 13 }}>Export succeeded — check your downloads.</div>} */}
+      </div>
     </div>
   </div>
-</div>
-</div>
+  </div>
       </aside>
     </>
   );

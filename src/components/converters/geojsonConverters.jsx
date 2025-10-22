@@ -1,9 +1,166 @@
 // converters/geojsonConverters.js
 import JSZip from 'jszip';
 import html2canvas from 'html2canvas';
+import { jsPDF } from 'jspdf';
+import shpwrite from '@mapbox/shp-write';
+/**
+ * Wait until a Leaflet tileLayer emits 'load' or timeout
+ */
+function waitForTileLayerLoad(tileLayer, timeout = 3000) {
+  return new Promise((resolve, reject) => {
+    let done = false;
+    const onLoad = () => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      tileLayer.off('load', onLoad);
+      resolve();
+    };
+    tileLayer.on('load', onLoad);
+    const timer = setTimeout(() => {
+      if (done) return;
+      done = true;
+      tileLayer.off('load', onLoad);
+      // resolve anyway (we'll try capture; if canvas tainted it will fail later)
+      resolve();
+    }, timeout);
+  });
+}
+/**
+ * SVG fallback renderer which draws GeoJSON features (no tiles).
+ * Use this if tiles are unavailable / tainted.
+ * (You can reuse the svg renderer you already have.)
+ */
+async function geojsonToPNG_SVG_Fallback(fc, opts = {}) {
+  // Minimal copy of your existing svg renderer (ensure consistent style)
+  const { width = 1200, height = 800, padding = 20, nameField } = opts;
+  // build bbox / projection and svg similar to earlier code you have...
+  // --- For brevity assume you already have geojsonToPNG_SVG implementation available ---
+  // If you don't, include the geojsonToPNG_SVG function you used previously.
+  return await geojsonToPNG_SVG(fc, opts); // assume defined elsewhere
+}
 
-// import shpwrite from 'shp-write';
+/**
+ * Capture Leaflet map + GeoJSON overlay to PNG.
+ *
+ * - fc: GeoJSON FeatureCollection
+ * - opts: { width, height, fitBounds, tileUrl, tileOptions, nameField, tileLoadTimeout }
+ *
+ * Returns: { blob, filename } where blob is image/png
+ */
+export async function geojsonToPNG_MapCapture(fc, opts = {}) {
+  const {
+    width = 1200,
+    height = 800,
+    fitBounds = true,
+    tileUrl = 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
+    tileOptions = {},
+    tileLoadTimeout = 4000,
+    nameField,
+  } = opts;
 
+  if (!fc || fc.type !== 'FeatureCollection') throw new Error('Expected GeoJSON FeatureCollection');
+
+  // Create offscreen container sized exactly to requested CSS pixels
+  const container = document.createElement('div');
+  container.style.position = 'fixed';
+  container.style.left = '-9999px';
+  container.style.top = '-9999px';
+  container.style.width = `${width}px`;
+  container.style.height = `${height}px`;
+  container.style.overflow = 'hidden';
+  // Ensure explicit pixel density doesn't get affected by CSS transforms
+  container.style.transform = 'none';
+  document.body.appendChild(container);
+
+  try {
+    if (!window.L) throw new Error('Leaflet (window.L) is required for map capture.');
+
+    // Create map with same size as container
+    const map = window.L.map(container, {
+      zoomControl: false,
+      attributionControl: false,
+      interactive: false,
+      // prevent gestures etc
+      dragging: false,
+      scrollWheelZoom: false,
+      doubleClickZoom: false,
+      boxZoom: false,
+      keyboard: false,
+      tap: false,
+    }).setView([0, 0], 2);
+    
+    // Tile layer: set crossOrigin to allow html2canvas sampling.
+    // IMPORTANT: tileUrl must be from a CORS-enabled provider for this to actually allow reading pixels.
+    const tileLayer = window.L.tileLayer(tileUrl, {
+      ...tileOptions,
+      crossOrigin: true,            // Leaflet supports boolean; some tile servers require crossOrigin:'anonymous'
+      // For some Leaflet versions, you might need:
+      // tileOptions: { crossOrigin: 'anonymous' }
+    }).addTo(map);
+
+    // Add GeoJSON overlay
+    const geojsonLayer = window.L.geoJSON(fc, {
+      style: () => ({ color: '#2b8cbe', weight: 2, fillOpacity: 0.18 }),
+      pointToLayer: (f, latlng) => window.L.circleMarker(latlng, { radius: 5, fillColor: '#ff5722', color: '#c1411a', weight: 1 })
+    }).addTo(map);
+
+    // Fit to features if asked
+    if (fitBounds && geojsonLayer.getBounds && geojsonLayer.getBounds().isValid && !geojsonLayer.getBounds().isValid()) {
+      map.setView([0, 0], 2);
+    } else if (fitBounds && geojsonLayer.getBounds) {
+      try { map.fitBounds(geojsonLayer.getBounds(), { padding: [20, 20] }); } catch (e) { map.setView([0,0], 2); }
+    }
+    // inside your map-capture flow (after you create `map` and add layers)
+    // Wait for tiles to load (or timeout)
+    await waitForTileLayerLoad(tileLayer, tileLoadTimeout);
+
+    // small delay so DOM paint can finalize
+    await new Promise(res => setTimeout(res, 150));
+
+    // Use devicePixelRatio to get crisp results and avoid stretching
+    const dpr = Math.max(1, window.devicePixelRatio || 1);
+
+    // Use html2canvas with scale = dpr so resulting canvas is width * dpr
+    const canvas = await html2canvas(container, {
+      useCORS: true,
+      backgroundColor: null,
+      scale: dpr,
+      // allowTaint: false, // we want to detect taint errors - don't allow taint
+    });
+
+    // Get blob (handle null -> tainted)
+    const blob = await new Promise((resolve, reject) => {
+      canvas.toBlob((b) => {
+        if (!b) {
+          reject(new Error('Canvas capture produced null blob. The canvas may be tainted by cross-origin tiles or images.'));
+        } else resolve(b);
+      }, 'image/png');
+    });
+
+    // Build filename
+    const filename = `${sanitizeName((fc.metadata && fc.metadata.name) || nameField || 'map_export')}.png`;
+
+    // cleanup map instance
+    map.remove();
+
+    // The returned Blob will have pixel size width*dpr x height*dpr; that's fine — it's a high-DPI image.
+    return { blob, filename };
+  } catch (err) {
+    // If anything fails and it looks like a CORS/taint/tiles problem, attempt SVG fallback
+    console.warn('[geojsonToPNG_MapCapture] capture failed, falling back to SVG renderer:', err.message);
+    try {
+      // attempt svg fallback; keep same width/height and name
+      const fallback = await geojsonToPNG_SVG_Fallback(fc, { width, height, nameField });
+      return fallback;
+    } catch (fbErr) {
+      // if fallback also fails, rethrow original for clarity
+      throw new Error(`Map capture failed: ${err.message}; SVG fallback failed: ${fbErr.message}`);
+    }
+  } finally {
+    try { document.body.removeChild(container); } catch (e) {}
+  }
+}
 function bboxOfGeoJSON(fc) {
   let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
   function visitCoords(coords){
@@ -120,73 +277,14 @@ export async function geojsonToPNG_SVG(fc, opts = {}) {
     try { URL.revokeObjectURL(url); } catch(e) {}
   }
 }
-/**
- * Capture the map (tiles + vectors) using Leaflet and html2canvas.
- * - fc: GeoJSON FeatureCollection
- * - options: { width, height, fitBounds, tileUrl, tileOptions, nameField }
- *
- * IMPORTANT: tileUrl must come from a CORS-enabled tile provider (or canvas will be tainted).
- */
-export async function geojsonToPNG_MapCapture(fc, opts = {}) {
-  const { width = 1200, height = 800, fitBounds = true,
-          tileUrl = 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
-          tileOptions = {}, nameField } = opts;
-  if (!fc || fc.type !== 'FeatureCollection') throw new Error('Expected GeoJSON FeatureCollection');
 
-  // create offscreen container
-  const container = document.createElement('div');
-  container.style.position = 'fixed';
-  container.style.left = '-9999px';
-  container.style.top = '-9999px';
-  container.style.width = `${width}px`;
-  container.style.height = `${height}px`;
-  document.body.appendChild(container);
-
-  try {
-    if (!window.L) throw new Error('Leaflet (window.L) is required for map capture.');
-
-    const map = window.L.map(container, { zoomControl: false, attributionControl: false, interactive: false }).setView([0,0], 2);
-
-    // Ensure crossOrigin where possible; html2canvas will attempt useCORS
-    const tileLayer = window.L.tileLayer(tileUrl, { ...tileOptions, maxZoom: 19 });
-    tileLayer.addTo(map);
-
-    const geojsonLayer = window.L.geoJSON(fc, {
-      style: () => ({ color: '#2b8cbe', weight: 2, fillOpacity: 0.25 }),
-      pointToLayer: (f, latlng) => window.L.circleMarker(latlng, { radius: 5 })
-    }).addTo(map);
-
-    if (fitBounds && geojsonLayer.getBounds && geojsonLayer.getBounds().isValid && !geojsonLayer.getBounds().isValid()) {
-      map.setView([0,0], 2);
-    } else if (fitBounds && geojsonLayer.getBounds) {
-      try { map.fitBounds(geojsonLayer.getBounds(), { padding: [20,20] }); } catch(e) {}
-    }
-
-    // Wait some time for tiles to load. Increase if slow connections.
-    await new Promise(res => setTimeout(res, 900));
-
-    // capture with html2canvas. useCORS helps but requires tile server CORS.
-    const canvas = await html2canvas(container, { useCORS: true, backgroundColor: null, scale: 1 });
-
-    // toBlob may be null if canvas tainted -> handle explicitly
-    const blob = await new Promise((resolve, reject) => {
-      canvas.toBlob((b) => {
-        if (!b) reject(new Error('Canvas capture produced null blob. Canvas may be tainted by cross-origin tiles.'));
-        else resolve(b);
-      }, 'image/png');
-    });
-
-    const filename = `${sanitizeName((fc.metadata && fc.metadata.name) || nameField || 'map_export')}.png`;
-    map.remove();
-    return { blob, filename };
-  } finally {
-    try { document.body.removeChild(container); } catch(e) {}
-  }
-}
 /**
  * Escape CSV cell
  */
-function sanitizeName(name){ return (name||'export').replace(/\s+/g,'_').replace(/[\\\/:*?"<>|]/g,'').slice(0,120); }
+function sanitizeName(name) {
+  if (!name) return 'export';
+  return String(name).replace(/\s+/g, '_').replace(/[\\\/:*?"<>|]/g, '').slice(0, 120);
+}
 function escapeCsvCell(v) {
   if (v === null || v === undefined) return '';
   const s = String(v);
@@ -194,36 +292,93 @@ function escapeCsvCell(v) {
   if (s.includes(',') || s.includes('\n') || s.includes('\r')) return `"${s}"`;
   return s;
 }
-export function geojsonToShapefile(fc, opts = {}) {
-  if (!fc || fc.type !== 'FeatureCollection' || !Array.isArray(fc.features)) {
-    throw new Error('Expected a GeoJSON FeatureCollection');
+
+/**
+ * Clean a polygon ring: remove invalid points, ensure closed, minimum 4 points
+ */
+function cleanPolygon(rings) {
+  if (!Array.isArray(rings)) return [];
+  return rings
+    .map(r => Array.isArray(r) ? r.filter(p => Array.isArray(p) && p.length === 2) : [])
+    .filter(r => r.length >= 4)
+    .map(r => {
+      // Ensure first = last
+      if (r[0][0] !== r[r.length - 1][0] || r[0][1] !== r[r.length - 1][1]) {
+        r.push(r[0]);
+      }
+      return r;
+    });
+}
+
+
+export async function geojsonToShapefile(fc) {
+  if (!fc || !fc.features || !fc.features.length) {
+    throw new Error('No features to export');
   }
 
-  // Normalize properties: shp-write expects an object: {type: 'FeatureCollection', features: [...]}
-  try {
-    // shp-write expects a plain GeoJSON object. Its zip() function returns a JSZip instance or a Blob depending on version.
-    // The simplest approach: call shpwrite.zip(fc) and coerce to Blob if necessary.
-    const zipData = shpwrite.zip(fc); // usually returns a Blob (browser) or Uint8Array
-    let blob;
-    if (zipData instanceof Blob) {
-      blob = zipData;
-    } else if (zipData instanceof ArrayBuffer || ArrayBuffer.isView(zipData)) {
-      blob = new Blob([zipData], { type: 'application/zip' });
-    } else {
-      // If shp-write returned a JSZip object, generate a blob via generateAsync
-      if (zipData && typeof zipData.generateAsync === 'function') {
-        // zipData is a JSZip instance
-        // generateAsync returns a promise; return a promise-based signature
-        return zipData.generateAsync({ type: 'blob', compression: 'DEFLATE' }).then((b) => {
-          const filename = `${(fc.metadata && fc.metadata.name) ? fc.metadata.name.replace(/\s+/g, '_') : 'export'}.zip`;
-          return { blob: b, filename };
-        });
-      }
-      // fallback: try JSON-stringify the returned object
-      blob = new Blob([JSON.stringify(zipData)], { type: 'application/zip' });
-    }
+  const allowedTypes = ['Point','MultiPoint','LineString','MultiLineString','Polygon','MultiPolygon'];
+  const flattened = [];
 
-    const filename = `${(fc.metadata && fc.metadata.name) ? fc.metadata.name.replace(/\s+/g, '_') : 'export'}.zip`;
+  // 1. Flatten GeometryCollections and clean geometries
+  fc.features.forEach(f => {
+    if (!f.geometry) return;
+    const geometries = f.geometry.type === 'GeometryCollection' ? f.geometry.geometries : [f.geometry];
+    geometries.forEach(geom => {
+      if (!geom || !allowedTypes.includes(geom.type)) return;
+      
+      // Clean coordinates per type
+      switch (geom.type) {
+        case 'Polygon':
+          geom.coordinates = cleanPolygon(geom.coordinates);
+          if (!geom.coordinates.length) return;
+          break;
+        case 'MultiPolygon':
+          geom.coordinates = geom.coordinates
+            .map(cleanPolygon)
+            .filter(p => p.length > 0);
+          if (!geom.coordinates.length) return;
+          break;
+        case 'LineString':
+          geom.coordinates = geom.coordinates.filter(p => Array.isArray(p) && p.length >= 2);
+          if (geom.coordinates.length < 2) return;
+          break;
+        case 'MultiLineString':
+          geom.coordinates = geom.coordinates
+            .map(line => line.filter(p => Array.isArray(p) && p.length >= 2))
+            .filter(line => line.length >= 2);
+          if (!geom.coordinates.length) return;
+          break;
+        case 'Point':
+        case 'MultiPoint':
+          if (!Array.isArray(geom.coordinates)) return;
+          break;
+        default:
+          return;
+      }
+      flattened.push({ 
+        type: 'Feature',
+        geometry: geom, 
+        properties: f.properties || {} 
+      });
+    });
+  });
+
+  if (!flattened.length) throw new Error('No valid geometries to export');
+
+  // 2. Create a clean FeatureCollection
+  const cleanedFC = {
+    type: 'FeatureCollection',
+    features: flattened
+  };
+
+  try {
+    // shpwrite.zip returns an ArrayBuffer synchronously (not a Promise)
+    const arrayBuffer = shpwrite.zip(cleanedFC);
+    
+    // Wrap the ArrayBuffer in a Blob
+    const blob = new Blob([arrayBuffer], { type: 'application/zip' });
+    const filename = `${(fc.metadata?.name || 'export').replace(/\s+/g, '_')}.zip`;
+    
     return { blob, filename };
   } catch (err) {
     throw new Error('Failed to create shapefile: ' + (err.message || err));
