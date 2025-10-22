@@ -1,4 +1,3 @@
-// src/pages/UploadAndPreview.jsx
 import React, { useEffect, useMemo, useState } from "react";
 import MapWorkspace from "../components/MapWorkspace";
 import UploadDropzone from "../components/UploadDropzone";
@@ -6,8 +5,8 @@ import PreviewRouter from "../components/PreviewRouter";
 import ExportPanel from "../components/ExportPanel";
 import FloatingToolbar from "../components/FloatingToolbar";
 
-const uid = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-const keyFor = (d) => (d ? d._id : null);
+const makeUid = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+const keyFor = (d) => (d && d.uid) || null;
 
 export default function UploadAndPreview() {
   const [datasets, setDatasets] = useState([]);
@@ -22,35 +21,33 @@ export default function UploadAndPreview() {
 
   const hasData = datasets.length > 0;
 
-  // Pick first dataset once uploaded
+  // Pick first dataset once uploaded (only if nothing active yet)
   useEffect(() => {
     if (datasets.length && !active) setActive(datasets[0]);
   }, [datasets, active]);
 
-  // Append new datasets (assign stable _id)
+  // Append new datasets (assign stable _id) — NEWEST ON TOP, NO DEDUPE, DON’T AUTO-SWITCH IF ACTIVE EXISTS
   const appendDatasets = (newOnes) => {
     if (!Array.isArray(newOnes) || !newOnes.length) return;
 
-    // assign ids
-    const withIds = newOnes.map((d) => ({ ...d, _id: d._id || uid() }));
-
+    const withIds = newOnes.map((d) => ({ ...d, uid: d.uid || d._id || d.id || makeUid() }));
     setDatasets((prev) => {
-      // de-dupe by label+kind, but keep ids for new ones
-      const byKey = new Map(prev.map((d) => [`${d.label}::${d.kind}`, d]));
-      for (const d of withIds) byKey.set(`${d.label}::${d.kind}`, d);
-      return Array.from(byKey.values());
+      // put new items on TOP so the latest appears first in the legend
+      return [...withIds, ...prev];
     });
 
-    // seed empty style buckets for new ids
+    // Seed empty style buckets for new ids
     setStyleMap((prev) => {
       const copy = { ...prev };
       for (const d of withIds) if (!copy[d._id]) copy[d._id] = {};
       return copy;
     });
 
-    // auto-select last uploaded dataset
-    const latest = withIds[withIds.length - 1];
-    if (latest) setActive(latest);
+    // Only auto-select if NOTHING is selected yet
+    if (!active) {
+      const firstNew = withIds[0];
+      if (firstNew) setActive(firstNew);
+    }
 
     setIsAddOpen(false);
   };
@@ -59,25 +56,17 @@ export default function UploadAndPreview() {
     const id = keyFor(toRemove);
 
     setDatasets((prev) => {
-      // 1) build the new list first
-      const filtered = prev.filter((d) => d._id !== id);
-
-      // 2) decide who should be active *before* we call any setters
-      const wasActive = active && active._id === id;
+      const filtered = prev.filter((d) => keyFor(d) !== id);
+      const wasActive = active && keyFor(active) === id;
       const nextActive = wasActive ? (filtered[0] || null) : active;
 
-      // 3) clear the map immediately if we just removed the active dataset
       if (wasActive && typeof window !== "undefined") {
         window.dispatchEvent(new CustomEvent("map:clear"));
       }
-
-      // 4) update active on the next tick to avoid reducer timing issues
       queueMicrotask(() => setActive(nextActive));
-
       return filtered;
     });
 
-    // 5) drop style + geojson buckets for the removed id
     setStyleMap((prev) => {
       const copy = { ...prev };
       delete copy[id];
@@ -109,10 +98,25 @@ export default function UploadAndPreview() {
     return () => window.removeEventListener("geojson:style", onStyle);
   }, [activeKey]);
 
-  // What to send to the map
+  // Merge the ACTIVE dataset with its FC (if we have one) so MapWorkspace doesn’t need fallbacks
+  const activeForMap = useMemo(() => {
+    if (!active) return null;
+    const id = keyFor(active);
+    const gj = id ? fcMap[id] : null;
+    return gj ? { ...active, geojson: gj } : active;
+  }, [active, fcMap]);
+
+  // Attach geojson (if parsed) to each dataset
+  const datasetsWithFC = useMemo(() => {
+    return datasets.map((d) => {
+      const id = keyFor(d);
+      const gj = id ? fcMap[id] : null;
+      return gj ? { ...d, geojson: gj } : d;
+    });
+  }, [datasets, fcMap]);
+
+  // Styles for the currently active dataset
   const activeStyle = (activeKey && styleMap[activeKey]) || {};
-  const activeGeoJSON = activeKey ? fcMap[activeKey] : null;
-  const activeForMap = active && activeGeoJSON ? { ...active, geojson: activeGeoJSON } : null;
 
   return (
     <div className="workspace" style={{ position: "relative", height: "100vh" }}>
@@ -130,7 +134,8 @@ export default function UploadAndPreview() {
 
       {/* Map */}
       <div className="map-root" style={{ position: "absolute", inset: 0, zIndex: 1 }}>
-        <MapWorkspace active={activeForMap} styleOptions={activeStyle} />
+        {/* Always send the selected dataset (active merged with its FC), plus full datasets list with FCs */}
+        <MapWorkspace datasets={datasetsWithFC} active={activeForMap} styleOptions={activeStyle} />
       </div>
 
       {/* Initial upload overlay */}
@@ -142,19 +147,24 @@ export default function UploadAndPreview() {
         </div>
       )}
 
-      {/* Preview: parses to FC and returns with the dataset id */}
-      {hasData && active && (
-        <div style={{ position: "absolute", right: 0, top: 0, zIndex: 2 }}>
-          <PreviewRouter
-            dataset={active}
-            onGeoJSONReady={({ datasetId, geojson }) => {
-              setFcMap((prev) => ({ ...prev, [datasetId]: geojson }));
-            }}
-          />
-        </div>
-      )}
+      {/* Preview: parse the current active dataset and bind result to THIS router instance’s id */}
+      {hasData && active && (() => {
+        const routerDataset = active;          // capture the dataset object given to this router instance
+        const routerId = keyFor(routerDataset); // capture its stable id at render time
+        return (
+          <div style={{ position: "absolute", right: 0, top: 0, zIndex: 2 }}>
+            <PreviewRouter
+              dataset={routerDataset}
+              onGeoJSONReady={({ geojson }) => {
+                // Always write parse result under the id of THIS router instance
+                if (!routerId) return;
+                setFcMap((prev) => ({ ...prev, [routerId]: geojson }));
+              }}
+            />
+          </div>
+        );
+      })()}
 
-      {/* Export modal/panel (unchanged) */}
       <ExportPanel
         datasets={datasets}
         selectedDataset={active}
@@ -163,7 +173,6 @@ export default function UploadAndPreview() {
         onClose={() => setIsExportOpen(false)}
       />
 
-      {/* Add modal using the same dropzone */}
       {isAddOpen && (
         <div className="upload-overlay" aria-label="Add dataset overlay">
           <div className="upload-card">

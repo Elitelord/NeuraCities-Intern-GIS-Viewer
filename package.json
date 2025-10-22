@@ -4,6 +4,7 @@
   "private": true,
   "dependencies": {
     "@tmcw/togeojson": "^7.1.2",
+    "html2canvas": "^1.4.1",
     "jszip": "^3.10.1",
     "leaflet": "^1.9.4",
     "papaparse": "^5.5.3",

@@ -29,20 +29,20 @@ export default function PreviewRouter({ dataset, onGeoJSONReady, onStyleChange }
 
 
   if (!dataset) return null;
+  const datasetId = dataset._id || dataset.id || dataset.uid || dataset.label || null;
+
 
   const emitFC = ({ label, geojson }) => {
-    onGeoJSONReady?.({ label, geojson });
-    // Cache for export fallbacks
+    onGeoJSONReady?.({ datasetId, label, geojson });
     try {
       window.__GEOJSON_CACHE__ = window.__GEOJSON_CACHE__ || {};
       if (label) window.__GEOJSON_CACHE__[label] = geojson;
     } catch {}
-    // Optional global event
     try {
       window.dispatchEvent(new CustomEvent('geojson:ready', { detail: { label, geojson } }));
     } catch {}
   };
-
+  
   // Helper: wrap a FeatureCollection as a File-like Blob for GeoJsonPreview
   const toGeoJSONBlob = (fc, name) => {
     const blob = new Blob([JSON.stringify(fc, null, 2)], { type: 'application/geo+json' });
