@@ -5,6 +5,7 @@ import JSZip from 'jszip'; // if not already imported
 import { csvToGeoJSON, kmzToGeoJSON,  gpxToGeoJSON, shapefileToGeoJSON} from './converters/fromFiles';
 import { geojsonToCSV, geojsonToKMZ, geojsonToKML, geojsonToGPX, geojsonToShapefile, geojsonToPNG_MapCapture, geojsonToPNG_SVG } from './converters/geojsonConverters';
 import shp from 'shpjs';
+import { rasterizeGeoJSONToCanvas,  writeGeoTIFFWithGeoTiffJS, geojsonBBox } from '../utils/geotiffExport';
 
 
 /**
@@ -614,6 +615,38 @@ async function resolveGeoJSONForExport(dataset) {
                   setDownloadError('GPX export failed: ' + (err?.message || err));
                 }
               }
+              else if (exportConfig.format === 'geotiff') {
+                // inside the geotiff export branch in ExportPanel.jsx
+                  try {
+                    // Resolve GeoJSON for export (reuse your resolveGeoJSONForExport)
+                    const fc = await resolveGeoJSONForExport(selectedDataset);
+                    if (!fc || !Array.isArray(fc.features) || fc.features.length === 0) {
+                      setDownloadError('GeoTIFF export requires GeoJSON with features.');
+                    } else {
+                      // Choose resolution (you can expose in UI); default 1024
+                      const width = 1024;
+                      const height = 1024;
+
+                      // compute bbox and optionally expand a little
+                      const bbox = geojsonBBox(fc);
+                      // Optionally pad bbox by 1-2% to avoid clipped edges
+                      const padX = (bbox.maxX - bbox.minX) * 0.02;
+                      const padY = (bbox.maxY - bbox.minY) * 0.02;
+                      const padded = { minX: bbox.minX - padX, minY: bbox.minY - padY, maxX: bbox.maxX + padX, maxY: bbox.maxY + padY };
+
+                      // Rasterize
+                        const { canvas, imageData } = rasterizeGeoJSONToCanvas(fc, width, height, padded);
+                      const arrayBuffer = await writeGeoTIFFWithGeoTiffJS(imageData.data, width, height, padded, { samples: 3, bitsPerSample: 8, compression: 'NONE' });
+                      const blob = new Blob([arrayBuffer], { type: 'image/tiff' });
+                      createAndDownload(buildFilename('tif'), blob);
+                      // create blob and download   
+                    }
+                  } catch (err) {
+                    console.error('[ExportPanel] geotiff export failed', err);
+                    setDownloadError('GeoTIFF export failed: ' + (err.message || err));
+                  }
+                }
+              
  
               else {
                 console.log('[ExportPanel] placeholder export for format:', exportConfig.format);
