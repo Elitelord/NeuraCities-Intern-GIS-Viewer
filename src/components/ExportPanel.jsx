@@ -5,7 +5,7 @@ import JSZip from 'jszip'; // if not already imported
 import { csvToGeoJSON, kmzToGeoJSON,  gpxToGeoJSON, shapefileToGeoJSON} from './converters/fromFiles';
 import { geojsonToCSV, geojsonToKMZ, geojsonToKML, geojsonToGPX, geojsonToShapefile, geojsonToPNG_MapCapture, geojsonToPNG_SVG } from './converters/geojsonConverters';
 import shp from 'shpjs';
-import { rasterizeGeoJSONToCanvas,  writeGeoTIFFWithGeoTiffJS, geojsonBBox } from '../utils/geotiffExport';
+import { rasterizeGeoJSONWithBasemapToCanvas,  writeGeoTIFFWithGeoTiffJS, geojsonBBox } from '../utils/geotiffExport';
 
 
 /**
@@ -635,7 +635,15 @@ async function resolveGeoJSONForExport(dataset) {
                       const padded = { minX: bbox.minX - padX, minY: bbox.minY - padY, maxX: bbox.maxX + padX, maxY: bbox.maxY + padY };
 
                       // Rasterize
-                        const { canvas, imageData } = rasterizeGeoJSONToCanvas(fc, width, height, padded);
+                        const { canvas, imageData } = await rasterizeGeoJSONWithBasemapToCanvas(fc, width, height, padded, {
+                          basemapTemplate: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
+                          subdomains: 'abcd',
+                          zoom: 12,
+                          tileSize: 256,
+                          tileRetinaSuffix: '',
+                          tileTimeoutMs: 7000 // or '@2x' if you want retina and template supports it
+                          // plus styling keys: fillStyle, strokeStyle, etc.
+                        });
                       const arrayBuffer = await writeGeoTIFFWithGeoTiffJS(imageData.data, width, height, padded, { samples: 3, bitsPerSample: 8, compression: 'NONE' });
                       const blob = new Blob([arrayBuffer], { type: 'image/tiff' });
                       createAndDownload(buildFilename('tif'), blob);
