@@ -1,10 +1,29 @@
 // src/components/UnifiedLegend.jsx
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 
-/** Broadcast style updates so MapWorkspace can react */
+const theme = {
+  primary: "#2C3E50",
+  secondary: "#34495E",
+  neutral: "#F5F5F5",
+  white: "#FFFFFF",
+  coral: "#008080",
+  cta: "#FF5747",
+};
+
+/** Broadcast events to MapWorkspace */
 function emitStyle(path, value) {
   try {
     window.dispatchEvent(new CustomEvent("geojson:style", { detail: { path, value } }));
+  } catch {}
+}
+function emitToggle(layer, enabled) {
+  try {
+    window.dispatchEvent(new CustomEvent("overlay:toggle", { detail: { layer, enabled } }));
+  } catch {}
+}
+function emitBasemap(name) {
+  try {
+    window.dispatchEvent(new CustomEvent("basemap:select", { detail: { name } }));
   } catch {}
 }
 
@@ -13,29 +32,12 @@ export default function UnifiedLegend({
   active = null,
   onSelect = () => {},
   onAdd = () => {},
-  onRemove = () => {},
   onExport = () => {},
+  onRemove = () => {}
 }) {
-  const [openStyle, setOpenStyle] = useState(false);
-  const [collapsed, setCollapsed] = useState(false);
-
-  // floating panel position (draggable)
-  const [pos, setPos] = useState({ x: 360, y: 80 });
-  const dragState = useRef({ dragging: false, offsetX: 0, offsetY: 0 });
-
-  useEffect(() => {
-    const onMove = (e) => {
-      if (!dragState.current.dragging) return;
-      setPos((p) => ({ x: e.clientX - dragState.current.offsetX, y: e.clientY - dragState.current.offsetY }));
-    };
-    const onUp = () => (dragState.current.dragging = false);
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
-    return () => {
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
-    };
-  }, []);
+  const [isOpen, setIsOpen] = useState(true);
+  const [layerChk, setLayerChk] = useState({ points: true, lines: true, polys: true, connect: false });
+  const [baseSel, setBaseSel] = useState("OpenStreetMap");
 
   // normalized input box sizing (color + number inputs match)
   const inputBox = useMemo(
@@ -67,308 +69,262 @@ export default function UnifiedLegend({
   const card = {
     position: "absolute",
     left: 16,
-    top: 16,
+    bottom: 16, // bottom-left placement
     zIndex: 10020,
     width: 320,
     maxHeight: "85vh",
     overflow: "auto",
     background: "#ffffff",
     border: "1px solid #e5e7eb",
-    borderRadius: 16, // consistent rounded corners
+    borderRadius: 16,
     boxShadow: "0 10px 30px rgba(0,0,0,0.15)",
     padding: 12,
-    fontFamily: "Arial, Helvetica, sans-serif", // match globals.css
+    paddingTop: 8,
+    fontFamily: "Arial, Helvetica, sans-serif",
     color: "#111827",
   };
 
-  // 🔧 exact size match for <input type="color"> using a scoped class
-  const colorCss = `
+  const visibleDatasets = useMemo(() => (Array.isArray(datasets) ? datasets : []), [datasets]);
+
+  const styleBlock = `
     .legend-color {
-      width: 72px;
-      height: 36px;
-      border-radius: 10px;
-      border: 1px solid #e5e7eb;
-      padding: 0;
-      box-sizing: border-box;
-      background: none;
-      appearance: none;
       -webkit-appearance: none;
       -moz-appearance: none;
+      appearance: none;
+      border: 1px solid #e5e7eb;
+      border-radius: 10px;
+      width: 72px;
+      height: 36px;
+      padding: 0;
       cursor: pointer;
       display: inline-block;
     }
-    /* Remove inner padding/border of the native swatch on WebKit */
-    .legend-color::-webkit-color-swatch-wrapper {
-      padding: 0;
-      border-radius: 10px;
-    }
-    .legend-color::-webkit-color-swatch {
-      border: none;
-      border-radius: 10px;
-    }
-    /* Firefox */
-    .legend-color::-moz-focus-inner {
-      border: 0;
-      padding: 0;
-    }
-    .legend-color::-moz-color-swatch {
-      border: none;
-      border-radius: 10px;
-    }
+    .legend-color::-webkit-color-swatch-wrapper { padding: 0; border-radius: 10px; }
+    .legend-color::-webkit-color-swatch { border: none; border-radius: 10px; }
+    .legend-color::-moz-focus-inner { border: 0; padding: 0 }
   `;
 
+  // Sync legend radio selection with map at mount
+  useEffect(() => {
+    emitBasemap(baseSel);
+  }, [baseSel]);
+
   return (
-    <aside style={card}>
-      <style>{colorCss}</style>
-
-      {/* Data list */}
-      <div style={{ paddingBottom: 12, borderBottom: "1px solid #e5e7eb" }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-          <h3 style={{ margin: 0, fontSize: 14, fontWeight: 700 }}>Datasets</h3>
-          <button onClick={onAdd} style={{ ...buttonGrey, padding: "6px 8px" }}>
-            Add data…
-          </button>
-        </div>
-
-        {datasets.length === 0 ? (
-          <div style={{ fontSize: 12, color: "#6b7280" }}>No datasets loaded.</div>
-        ) : (
-          <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
-            {datasets.map((d, i) => {
-              // pick a stable identity, in priority order
-              const key = d.uid;
-              const activeKey = active?.uid ?? null;
-              const isActive = activeKey != null && activeKey === d.uid;
-
-              return (
-                <li
-                  key={key}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                    padding: 6,
-                    borderRadius: 12,
-                    background: isActive ? "#f0fdf4" : "#f8fafc",
-                    outline: isActive ? "1px solid #86efac" : "none",
-                    marginBottom: 6,
-                  }}
-                >
-                  <button
-                    onClick={() => onSelect(d)}
-                    title={`${d.label} — ${d.kind}`}
-                    style={{
-                      flex: 1,
-                      textAlign: "left",
-                      border: "none",
-                      background: "transparent",
-                      cursor: "pointer",
-                      fontSize: 13,
-                      fontWeight: 600,
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      color: "#111827",
-                      fontFamily: "Arial, Helvetica, sans-serif",
-                    }}
-                  >
-                    {d.label} — {d.kind}
-                  </button>
-                  <button
-                    title="Remove dataset"
-                    onClick={() => onRemove(d)}
-                    style={{ width: 28, height: 28, borderRadius: 10, background: "#e5e7eb", border: "none", cursor: "pointer" }}
-                  >
-                    ×
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-
-        <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
-          <button
-            disabled={!active}
-            onClick={() => active && onExport(active)}
-            style={{
-              padding: "8px 10px",
-              borderRadius: 12,
-              border: "none",
-              cursor: active ? "pointer" : "not-allowed",
-              background: active ? "#0ea5e9" : "#9ca3af",
-              color: "#fff",
-              fontWeight: 700,
-              fontFamily: "Arial, Helvetica, sans-serif",
-              fontSize: 12,
-            }}
-          >
-            Export…
-          </button>
-          <button
-            disabled={!active}
-            onClick={() => setOpenStyle(true)}
-            style={{ ...buttonGrey, opacity: active ? 1 : 0.6 }}
-            title="Open style panel"
-          >
-            Style…
-          </button>
-        </div>
-      </div>
-
-      {/* Minimal legend text (actual controls in floating panel) */}
-      <div style={{ paddingTop: 12 }}>
-        <h4 style={{ margin: 0, marginBottom: 8, fontSize: 14, fontWeight: 700 }}>
-          {active ? `Legend: ${active.label}` : "Legend"}
-        </h4>
-        <div style={{ fontSize: 12, color: "#6b7280" }}>
-          Use the Style button to adjust symbology (points, lines, polygons). Toggle layers in the map control.
-        </div>
-      </div>
-
-      {/* Floating Style Panel (draggable, collapsible) */}
-      {openStyle && (
-        <div
-          style={{
-            position: "fixed",
-            left: Math.max(8, Math.min(pos.x, window.innerWidth - 440)),
-            top: Math.max(8, Math.min(pos.y, window.innerHeight - (collapsed ? 64 : 520))),
-            zIndex: 10040,
-            width: 420,
-            maxWidth: "90vw",
-            background: "#fff",
-            border: "1px solid #e5e7eb",
-            borderRadius: 16,
-            boxShadow: "0 20px 60px rgba(0,0,0,0.25)",
-            overflow: "hidden",
-            fontFamily: "Arial, Helvetica, sans-serif",
-            color: "#111827",
-          }}
+    <>
+      {/* Toggle button (bottom-left) */}
+      {!isOpen && (
+        <button
+          className="btn"
+          style={{ position: "absolute", left: 16, bottom: 16, zIndex: 10030 }}
+          onClick={() => setIsOpen(true)}
+          aria-label="Open legend and layers"
         >
-          {/* Header (drag handle) */}
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              padding: 10,
-              cursor: "move",
-              background: "#f8fafc",
-              borderBottom: "1px solid #e5e7eb",
-              fontFamily: "Arial, Helvetica, sans-serif",
-            }}
-            onMouseDown={(e) => {
-              const rect = e.currentTarget.parentElement.getBoundingClientRect();
-              dragState.current.dragging = true;
-              dragState.current.offsetX = e.clientX - rect.left;
-              dragState.current.offsetY = e.clientY - rect.top;
-            }}
-            onDoubleClick={() => setCollapsed((c) => !c)} // quick collapse/expand
-            title="Drag to move • Double-click to collapse/expand"
-          >
-            <div style={{ fontWeight: 800, fontSize: 14 }}>
-              Style options{active ? ` — ${active.label}` : ""}
+          Legend & Layers
+        </button>
+      )}
+
+      {isOpen && (
+        <aside style={card}>
+          <style>{styleBlock}</style>
+
+          {/* Header */}
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+            <div style={{ fontWeight: 700 }}>Legend & Layers</div>
+            <button className="btn" onClick={() => setIsOpen(false)} aria-label="Close legend" style={{ padding: "4px 8px" }}>
+              Close
+            </button>
+          </div>
+
+          {/* Datasets chooser */}
+          {!!visibleDatasets.length && (
+            <div style={{ marginBottom: 10 }}>
+              <div style={{ fontSize: 12, color: "#64748b", marginBottom: 6 }}>Datasets</div>
+              <div style={{ display: "grid", gap: 6 }}>
+                {visibleDatasets.map((d) => {
+                  const isActive = active && d.uid === active.uid;
+                  return (
+                    <button
+                      key={d.uid || d.label || Math.random()}
+                      onClick={() => onSelect?.(d)}
+                      className="toolbar-item"
+                      style={{
+                        textAlign: "left",
+                        padding: 6,
+                        borderRadius: 8,
+                        background: isActive ? theme.neutral : theme.white,
+                        border: isActive ? `1px solid ${theme.coral}` : "1px solid #e5e7eb",
+                      }}
+                    >
+                      <div style={{ fontWeight: 600, color: "#0f172a" }}>{d.label || d.name || "Dataset"}</div>
+                      <div style={{ fontSize: 12, color: "#64748b" }}>{d.kind || d.type || "Unknown"}</div>
+                    </button>
+                  );
+                })}
+              </div>
+              <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                <button className="btn" onClick={() => onAdd?.()}>Add</button>
+                <button className="btn" onClick={() => onExport?.()}>Export</button>
+                {active && (
+                  <button style={buttonGrey} onClick={() => onRemove?.(active)} title="Remove selected dataset">
+                    Remove
+                  </button>
+                )}
+              </div>
             </div>
-            <div style={{ display: "flex", gap: 8 }}>
-              <button onClick={() => setCollapsed((c) => !c)} style={buttonGrey} title="Collapse / Expand">
-                {collapsed ? "Expand" : "Collapse"}
-              </button>
-              <button onClick={() => setOpenStyle(false)} style={buttonGrey} title="Close">
-                Close
-              </button>
+          )}
+
+          {/* Overlay layer toggles */}
+          <div style={{ borderTop: "1px solid #e5e7eb", paddingTop: 8, marginTop: 4 }}>
+            <div style={{ fontSize: 12, color: "#64748b", marginBottom: 6 }}>Layers</div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+              {["points", "lines", "polys", "connect"].map((k) => (
+                <label key={k} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <input
+                    type="checkbox"
+                    checked={!!layerChk[k]}
+                    onChange={(e) => {
+                      const enabled = e.target.checked;
+                      setLayerChk((prev) => ({ ...prev, [k]: enabled }));
+                      emitToggle(k, enabled);
+                    }}
+                  />
+                  <span style={{ textTransform: "capitalize" }}>
+                    {k === "polys" ? "Polygons" : k === "connect" ? "Connect points" : k}
+                  </span>
+                </label>
+              ))}
             </div>
           </div>
 
-          {/* Body */}
-          {!collapsed && (
-            <div style={{ padding: 16 }}>
-              {!active ? (
-                <div style={{ fontSize: 12, color: "#6b7280" }}>Select a dataset on the left.</div>
-              ) : (
-                <div style={{ display: "grid", rowGap: 14 }}>
-                  {/* Points */}
-                  <div>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: "#374151", marginBottom: 8 }}>Points</div>
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8, alignItems: "center", marginBottom: 8 }}>
-                      <span style={{ fontSize: 12 }}>Color</span>
-                      <input
-                        type="color"
-                        className="legend-color"
-                        onChange={(e) => emitStyle("point.color", e.target.value)}
-                      />
-                    </div>
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8, alignItems: "center" }}>
-                      <span style={{ fontSize: 12 }}>Radius</span>
-                      <input
-                        type="number"
-                        min="1"
-                        defaultValue={6}
-                        style={inputBox}
-                        onChange={(e) => emitStyle("point.radius", Number(e.target.value) || 6)}
-                      />
-                    </div>
-                    <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, marginTop: 8 }}>
-                      <input type="checkbox" onChange={(e) => emitStyle("connect.points", !!e.target.checked)} /> Connect points with a line
-                    </label>
-                  </div>
-
-                  {/* Lines */}
-                  <div>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: "#374151", marginBottom: 8 }}>Lines</div>
-                    <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, marginBottom: 8 }}>
-                      <input type="checkbox" defaultChecked onChange={(e) => emitStyle("line.show", !!e.target.checked)} /> Show line features
-                    </label>
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8, alignItems: "center", marginBottom: 8 }}>
-                      <span style={{ fontSize: 12 }}>Color</span>
-                      <input
-                        type="color"
-                        className="legend-color"
-                        onChange={(e) => emitStyle("line.color", e.target.value)}
-                      />
-                    </div>
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8, alignItems: "center" }}>
-                      <span style={{ fontSize: 12 }}>Width</span>
-                      <input
-                        type="number"
-                        min="1"
-                        defaultValue={2}
-                        style={inputBox}
-                        onChange={(e) => emitStyle("line.weight", Number(e.target.value) || 2)}
-                      />
-                    </div>
-                  </div>
-
-                  {/* Polygons */}
-                  <div>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: "#374151", marginBottom: 8 }}>Polygons</div>
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8, alignItems: "center", marginBottom: 8 }}>
-                      <span style={{ fontSize: 12 }}>Fill</span>
-                      <input
-                        type="color"
-                        className="legend-color"
-                        onChange={(e) => emitStyle("poly.fillColor", e.target.value)}
-                      />
-                    </div>
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8, alignItems: "center" }}>
-                      <span style={{ fontSize: 12 }}>Fill opacity</span>
-                      <input
-                        type="number"
-                        step="0.05"
-                        min="0"
-                        max="1"
-                        defaultValue={0.25}
-                        style={inputBox}
-                        onChange={(e) =>
-                          emitStyle("poly.fillOpacity", Math.max(0, Math.min(1, Number(e.target.value) || 0.25)))
-                        }
-                      />
-                    </div>
-                  </div>
-                </div>
-              )}
+          {/* Point style */}
+          <div style={{ borderTop: "1px solid #e5e7eb", marginTop: 12, paddingTop: 10 }}>
+            <div style={{ fontSize: 12, color: "#64748b", marginBottom: 6 }}>Point style</div>
+            <div style={{ display: "grid", gap: 8 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8, alignItems: "center" }}>
+                <span style={{ fontSize: 12 }}>Color</span>
+                <input type="color" className="legend-color" onChange={(e) => emitStyle("point.color", e.target.value)} />
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8, alignItems: "center" }}>
+                <span style={{ fontSize: 12 }}>Radius</span>
+                <input
+                  type="number"
+                  min="1"
+                  defaultValue={6}
+                  style={inputBox}
+                  onChange={(e) => emitStyle("point.radius", Number(e.target.value) || 6)}
+                />
+              </div>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, marginTop: 8 }}>
+                
+              </label>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8, alignItems: "center" }}>
+                
+              </div>
             </div>
-          )}
-        </div>
+          </div>
+
+          {/* Line style */}
+          <div style={{ borderTop: "1px solid #e5e7eb", marginTop: 12, paddingTop: 10 }}>
+            <div style={{ fontSize: 12, color: "#64748b", marginBottom: 6 }}>Line style</div>
+            <div style={{ display: "grid", gap: 8 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8, alignItems: "center" }}>
+                <span style={{ fontSize: 12 }}>Color</span>
+                <input type="color" className="legend-color" onChange={(e) => emitStyle("line.color", e.target.value)} />
+              </div>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
+                <span>Width</span>
+                <input
+                  type="number"
+                  min="1"
+                  defaultValue={3}
+                  style={{ ...inputBox, width: 60 }}
+                  onChange={(e) => emitStyle("line.width", Math.max(1, Number(e.target.value) || 3))}
+                />
+              </label>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
+                <span>Opacity</span>
+                <input
+                  type="number"
+                  min="0"
+                  max="1"
+                  step="0.05"
+                  defaultValue={1}
+                  style={{ ...inputBox, width: 72 }}
+                  onChange={(e) => emitStyle("line.opacity", Math.max(0, Math.min(1, Number(e.target.value) || 1)))}
+                />
+              </label>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8, alignItems: "center" }}>
+                <span style={{ fontSize: 12 }}>Dash</span>
+                <input
+                  type="text"
+                  placeholder="e.g. 4,2"
+                  style={{ ...inputBox, width: 100 }}
+                  onChange={(e) => emitStyle("line.dash", e.target.value)}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Polygon style */}
+          <div style={{ borderTop: "1px solid #e5e7eb", marginTop: 12, paddingTop: 10 }}>
+            <div style={{ fontSize: 12, color: "#64748b", marginBottom: 6 }}>Polygon style</div>
+            <div style={{ display: "grid", gap: 8 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8, alignItems: "center" }}>
+                <span style={{ fontSize: 12 }}>Fill</span>
+                <input type="color" className="legend-color" onChange={(e) => emitStyle("poly.fill", e.target.value)} />
+              </div>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
+                <span>Fill opacity</span>
+                <input
+                  type="number"
+                  min="0"
+                  max="1"
+                  step="0.05"
+                  defaultValue={0.25}
+                  style={{ ...inputBox, width: 72 }}
+                  onChange={(e) => emitStyle("poly.fillOpacity", Math.max(0, Math.min(1, Number(e.target.value) || 0.25)))}
+                />
+              </label>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8, alignItems: "center" }}>
+                <span style={{ fontSize: 12 }}>Stroke</span>
+                <input type="color" className="legend-color" onChange={(e) => emitStyle("poly.stroke", e.target.value)} />
+              </div>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
+                <span>Stroke width</span>
+                <input
+                  type="number"
+                  min="0"
+                  defaultValue={2}
+                  style={{ ...inputBox, width: 60 }}
+                  onChange={(e) => emitStyle("poly.width", Math.max(0, Number(e.target.value) || 2))}
+                />
+              </label>
+            </div>
+          </div>
+
+          {/* Map base layers (moved to bottom) */}
+          <div style={{ borderTop: "1px solid #e5e7eb", marginTop: 12, paddingTop: 10 }}>
+            <div style={{ fontSize: 12, color: "#64748b", marginBottom: 6 }}>Map</div>
+            <div style={{ display: "grid", gap: 6 }}>
+              {["OpenStreetMap", "Carto Voyager", "Carto Positron", "Esri WorldImagery"].map((name) => (
+                <label key={name} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <input
+                    type="radio"
+                    name="basemap"
+                    value={name}
+                    checked={baseSel === name}
+                    onChange={() => {
+                      setBaseSel(name);
+                      emitBasemap(name);
+                    }}
+                  />
+                  <span>{name}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+        </aside>
       )}
-    </aside>
+    </>
   );
 }

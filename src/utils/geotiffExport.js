@@ -1,5 +1,5 @@
 // src/utils/geoTiffExport.js  (replacement function using geotiff.js)
-import GeoTIFF, { writeArrayBuffer } from 'geotiff'; // writeArrayBuffer is exported in geotiff.js docs
+import { writeArrayBuffer } from 'geotiff';
 // Convert FeatureCollection -> bbox {minX, minY, maxX, maxY}
 export function geojsonBBox(fc) {
   if (!fc || !Array.isArray(fc.features) || fc.features.length === 0) {

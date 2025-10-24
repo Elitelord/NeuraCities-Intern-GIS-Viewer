@@ -139,7 +139,7 @@ html, body, #root { height: 100%; }
   border: 1px solid #e5e7eb;
   background: #fff;
 }
-.toolbar-item.is-active { border-color: #14b8a6; background: #ecfeff; }
+.toolbar-item.is-active { border-color: #008080; background: #ecfeff; }
 
 /* floating preview panel */
 .preview-fab {
@@ -169,7 +169,7 @@ html, body, #root { height: 100%; }
   padding: 6px 10px;
   border-radius: 8px;
   border: 1px solid #0f766e;
-  background: #14b8a6;
+  background: #008080;
   color: white;
   font-weight: 600;
 }
