@@ -1,5 +1,4 @@
-// src/components/UnifiedLegend.jsx
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useState } from "react";
 
 const theme = {
   primary: "#2C3E50",
@@ -10,15 +9,12 @@ const theme = {
   cta: "#FF5747",
 };
 
-/** Broadcast events to MapWorkspace */
+const FONT_STACK =
+  "'Montserrat', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif";
+
 function emitStyle(path, value) {
   try {
     window.dispatchEvent(new CustomEvent("geojson:style", { detail: { path, value } }));
-  } catch {}
-}
-function emitToggle(layer, enabled) {
-  try {
-    window.dispatchEvent(new CustomEvent("overlay:toggle", { detail: { layer, enabled } }));
   } catch {}
 }
 function emitBasemap(name) {
@@ -32,44 +28,17 @@ export default function UnifiedLegend({
   active = null,
   onSelect = () => {},
   onAdd = () => {},
-  onExport = () => {},
-  onRemove = () => {}
+  onRemove = () => {},
+  onToggleVisible = () => {},
 }) {
   const [isOpen, setIsOpen] = useState(true);
-  const [layerChk, setLayerChk] = useState({ points: true, lines: true, polys: true, connect: false });
+  const [styleOpen, setStyleOpen] = useState(true);
   const [baseSel, setBaseSel] = useState("OpenStreetMap");
-
-  // normalized input box sizing (color + number inputs match)
-  const inputBox = useMemo(
-    () => ({
-      width: 72,
-      height: 36,
-      borderRadius: 10,
-      border: "1px solid #e5e7eb",
-      padding: "0 8px",
-      fontFamily: "Arial, Helvetica, sans-serif",
-      fontSize: 12,
-      color: "#111827",
-      boxSizing: "border-box",
-    }),
-    []
-  );
-
-  const buttonGrey = {
-    padding: "8px 10px",
-    borderRadius: 12,
-    border: "1px solid #e5e7eb",
-    background: "#f8fafc",
-    color: "#111827",
-    cursor: "pointer",
-    fontFamily: "Arial, Helvetica, sans-serif",
-    fontSize: 12,
-  };
 
   const card = {
     position: "absolute",
     left: 16,
-    bottom: 16, // bottom-left placement
+    bottom: 16,
     zIndex: 10020,
     width: 320,
     maxHeight: "85vh",
@@ -77,253 +46,324 @@ export default function UnifiedLegend({
     background: "#ffffff",
     border: "1px solid #e5e7eb",
     borderRadius: 16,
-    boxShadow: "0 10px 30px rgba(0,0,0,0.15)",
+    boxShadow: "0 10px 30px rgba(2,6,23,0.12)",
     padding: 12,
-    paddingTop: 8,
-    fontFamily: "Arial, Helvetica, sans-serif",
-    color: "#111827",
+    fontFamily: FONT_STACK,
   };
 
-  const visibleDatasets = useMemo(() => (Array.isArray(datasets) ? datasets : []), [datasets]);
+  const inputBox = {
+    border: "1px solid #e5e7eb",
+    borderRadius: 8,
+    padding: "4px 6px",
+    background: "#fff",
+    fontFamily: FONT_STACK,
+  };
 
-  const styleBlock = `
-    .legend-color {
-      -webkit-appearance: none;
-      -moz-appearance: none;
-      appearance: none;
-      border: 1px solid #e5e7eb;
-      border-radius: 10px;
-      width: 72px;
-      height: 36px;
-      padding: 0;
-      cursor: pointer;
-      display: inline-block;
-    }
-    .legend-color::-webkit-color-swatch-wrapper { padding: 0; border-radius: 10px; }
-    .legend-color::-webkit-color-swatch { border: none; border-radius: 10px; }
-    .legend-color::-moz-focus-inner { border: 0; padding: 0 }
-  `;
+  const FIELD_SIZE = { width: 60, height: 36, boxSizing: "border-box" };
 
-  // Sync legend radio selection with map at mount
-  useEffect(() => {
-    emitBasemap(baseSel);
-  }, [baseSel]);
+
+  const reopenBtn = {
+    position: "absolute",
+    left: 16,
+    bottom: 16,
+    zIndex: 10020,
+    borderRadius: 8,
+    border: "1px solid #e5e7eb",
+    background: "#fff",
+    cursor: "pointer",
+    boxShadow: "0 2px 6px rgba(0,0,0,0.15)",
+    padding: "6px 10px",
+    fontFamily: FONT_STACK,
+    color: "#0f172a",
+  };
 
   return (
     <>
-      {/* Toggle button (bottom-left) */}
-      {!isOpen && (
-        <button
-          className="btn"
-          style={{ position: "absolute", left: 16, bottom: 16, zIndex: 10030 }}
-          onClick={() => setIsOpen(true)}
-          aria-label="Open legend and layers"
-        >
-          Legend & Layers
-        </button>
-      )}
-
-      {isOpen && (
-        <aside style={card}>
-          <style>{styleBlock}</style>
-
-          {/* Header */}
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-            <div style={{ fontWeight: 700 }}>Legend & Layers</div>
-            <button className="btn" onClick={() => setIsOpen(false)} aria-label="Close legend" style={{ padding: "4px 8px" }}>
-              Close
+      {isOpen ? (
+        <aside style={card} className="pointer-events-auto">
+          {/* --- Header --- */}
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              fontWeight: 700,
+              color: "#0f172a",
+              marginBottom: 10,
+              fontFamily: FONT_STACK,
+            }}
+          >
+            <div>Legend & Style</div>
+            <button
+              onClick={() => setIsOpen(false)}
+              aria-label="Close legend"
+              style={{
+                width: 28,
+                height: 28,
+                borderRadius: 8,
+                border: "1px solid #e5e7eb",
+                background: "#fff",
+                cursor: "pointer",
+                fontFamily: FONT_STACK,
+              }}
+            >
+              ×
             </button>
           </div>
 
-          {/* Datasets chooser */}
-          {!!visibleDatasets.length && (
-            <div style={{ marginBottom: 10 }}>
-              <div style={{ fontSize: 12, color: "#64748b", marginBottom: 6 }}>Datasets</div>
+          <div style={{ color: "#475569", fontSize: 12, fontFamily: FONT_STACK }}>
+            Upload → convert to GeoJSON → render. Toggle or remove layers below.
+          </div>
+
+          {/* --- Dataset list --- */}
+          {datasets?.length > 0 && (
+            <div style={{ marginBottom: 10, marginTop: 8 }}>
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  marginBottom: 6,
+                }}
+              >
+                <div style={{ fontSize: 12, color: "#64748b", fontFamily: FONT_STACK }}>
+                  Legend
+                </div>
+                <button
+                  className="btn"
+                  onClick={() => onAdd?.()}
+                  aria-label="Add dataset"
+                  style={{ fontFamily: FONT_STACK }}
+                >
+                  Add
+                </button>
+              </div>
               <div style={{ display: "grid", gap: 6 }}>
-                {visibleDatasets.map((d) => {
+                {datasets.map((d) => {
                   const isActive = active && d.uid === active.uid;
+                  const visible = d.visible !== false;
                   return (
-                    <button
-                      key={d.uid || d.label || Math.random()}
-                      onClick={() => onSelect?.(d)}
-                      className="toolbar-item"
+                    <div
+                      key={d.uid}
                       style={{
-                        textAlign: "left",
+                        display: "grid",
+                        gridTemplateColumns: "24px 1fr 28px",
+                        gap: 8,
+                        alignItems: "center",
                         padding: 6,
                         borderRadius: 8,
                         background: isActive ? theme.neutral : theme.white,
-                        border: isActive ? `1px solid ${theme.coral}` : "1px solid #e5e7eb",
+                        border: isActive
+                          ? `1px solid ${theme.coral}`
+                          : "1px solid #e5e7eb",
+                        fontFamily: FONT_STACK,
                       }}
                     >
-                      <div style={{ fontWeight: 600, color: "#0f172a" }}>{d.label || d.name || "Dataset"}</div>
-                      <div style={{ fontSize: 12, color: "#64748b" }}>{d.kind || d.type || "Unknown"}</div>
-                    </button>
+                      <input
+                        type="checkbox"
+                        checked={visible}
+                        onChange={(e) => onToggleVisible?.(d, e.target.checked)}
+                      />
+                      <button
+                        onClick={() => onSelect?.(d)}
+                        style={{
+                          textAlign: "left",
+                          background: "none",
+                          border: "none",
+                          cursor: "pointer",
+                          fontFamily: FONT_STACK,
+                        }}
+                      >
+                        <div style={{ fontWeight: 600, color: "#0f172a" }}>
+                          {d.label || d.name || "Dataset"}
+                        </div>
+                        <div style={{ fontSize: 12, color: "#64748b" }}>
+                          {d.kind || d.type || (d.geojson ? "GeoJSON" : d.ext || "Unknown")}
+                        </div>
+                      </button>
+                      <button
+                        onClick={() => onRemove?.(d)}
+                        aria-label="Remove dataset"
+                        style={{
+                          width: 28,
+                          height: 28,
+                          borderRadius: 8,
+                          border: "1px solid #e5e7eb",
+                          background: "#fff",
+                          cursor: "pointer",
+                          fontFamily: FONT_STACK,
+                        }}
+                      >
+                        ×
+                      </button>
+                    </div>
                   );
                 })}
-              </div>
-              <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-                <button className="btn" onClick={() => onAdd?.()}>Add</button>
-                <button className="btn" onClick={() => onExport?.()}>Export</button>
-                {active && (
-                  <button style={buttonGrey} onClick={() => onRemove?.(active)} title="Remove selected dataset">
-                    Remove
-                  </button>
-                )}
               </div>
             </div>
           )}
 
-          {/* Overlay layer toggles */}
-          <div style={{ borderTop: "1px solid #e5e7eb", paddingTop: 8, marginTop: 4 }}>
-            <div style={{ fontSize: 12, color: "#64748b", marginBottom: 6 }}>Layers</div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-              {["points", "lines", "polys", "connect"].map((k) => (
-                <label key={k} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <input
-                    type="checkbox"
-                    checked={!!layerChk[k]}
-                    onChange={(e) => {
-                      const enabled = e.target.checked;
-                      setLayerChk((prev) => ({ ...prev, [k]: enabled }));
-                      emitToggle(k, enabled);
-                    }}
-                  />
-                  <span style={{ textTransform: "capitalize" }}>
-                    {k === "polys" ? "Polygons" : k === "connect" ? "Connect points" : k}
-                  </span>
-                </label>
-              ))}
+          {/* --- Symbology section --- */}
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              marginBottom: 6,
+              marginTop: 8,
+            }}
+          >
+            <div style={{ fontSize: 12, color: "#64748b", fontFamily: FONT_STACK }}>
+              Symbology
             </div>
+            <button
+              onClick={() => setStyleOpen((o) => !o)}
+              aria-label="Toggle symbology"
+              style={{
+                width: 28,
+                height: 28,
+                borderRadius: 8,
+                border: "1px solid #e5e7eb",
+                background: "#fff",
+                cursor: "pointer",
+                fontFamily: FONT_STACK,
+              }}
+            >
+              {styleOpen ? "−" : "+"}
+            </button>
           </div>
 
-          {/* Point style */}
-          <div style={{ borderTop: "1px solid #e5e7eb", marginTop: 12, paddingTop: 10 }}>
-            <div style={{ fontSize: 12, color: "#64748b", marginBottom: 6 }}>Point style</div>
-            <div style={{ display: "grid", gap: 8 }}>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8, alignItems: "center" }}>
-                <span style={{ fontSize: 12 }}>Color</span>
-                <input type="color" className="legend-color" onChange={(e) => emitStyle("point.color", e.target.value)} />
+          {/* ✅ FIXED: conditional block restored */}
+          {styleOpen && (
+            <div style={{ fontFamily: FONT_STACK }}>
+              {/* Point */}
+              <div style={{ borderTop: "1px solid #e5e7eb", paddingTop: 10 }}>
+                <div style={{ fontSize: 12, color: "#64748b", marginBottom: 6 }}>Point style</div>
+                <div style={{ display: "grid", gap: 8 }}>
+                  <label style={{ display: "flex", justifyContent: "space-between" }}>
+                    <span>Color</span>
+                    <input
+                      type="color"
+                      style={{ ...inputBox, ...FIELD_SIZE, padding: 0}}
+                      onChange={(e) => emitStyle("point.color", e.target.value)}
+                    />
+                  </label>
+                  <label style={{ display: "flex", justifyContent: "space-between" }}>
+                    <span>Radius</span>
+                    <input
+                      type="number"
+                      min={1}
+                      max={50}
+                      defaultValue={6}
+                      style={{ ...inputBox, ...FIELD_SIZE }}
+                      onChange={(e) =>
+                        emitStyle("point.radius", Math.max(1, Number(e.target.value) || 6))
+                      }
+                    />
+                  </label>
+                </div>
               </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8, alignItems: "center" }}>
-                <span style={{ fontSize: 12 }}>Radius</span>
-                <input
-                  type="number"
-                  min="1"
-                  defaultValue={6}
-                  style={inputBox}
-                  onChange={(e) => emitStyle("point.radius", Number(e.target.value) || 6)}
-                />
+
+              {/* Line */}
+              <div style={{ borderTop: "1px solid #e5e7eb", marginTop: 12, paddingTop: 10 }}>
+                <div style={{ fontSize: 12, color: "#64748b", marginBottom: 6 }}>Line style</div>
+                <div style={{ display: "grid", gap: 8 }}>
+                  <label style={{ display: "flex", justifyContent: "space-between" }}>
+                    <span>Color</span>
+                    <input
+                      type="color"
+                      style={{ ...inputBox, ...FIELD_SIZE, padding: 0}}
+                      onChange={(e) => emitStyle("line.color", e.target.value)}
+                    />
+                  </label>
+                  <label style={{ display: "flex", justifyContent: "space-between" }}>
+                    <span>Width</span>
+                    <input
+                      type="number"
+                      min={1}
+                      max={20}
+                      defaultValue={2}
+                      style={{ ...inputBox, ...FIELD_SIZE}}
+                      onChange={(e) =>
+                        emitStyle("line.width", Math.max(1, Number(e.target.value) || 2))
+                      }
+                    />
+                  </label>
+                </div>
               </div>
-              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, marginTop: 8 }}>
-                
-              </label>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8, alignItems: "center" }}>
-                
+
+              {/* Polygon */}
+              <div style={{ borderTop: "1px solid #e5e7eb", marginTop: 12, paddingTop: 10 }}>
+                <div style={{ fontSize: 12, color: "#64748b", marginBottom: 6 }}>Polygon style</div>
+                <div style={{ display: "grid", gap: 8 }}>
+                  <label style={{ display: "flex", justifyContent: "space-between" }}>
+                    <span>Fill</span>
+                    <input
+                      type="color"
+                      style={{ ...inputBox, ...FIELD_SIZE, padding: 0}}
+                      onChange={(e) => emitStyle("poly.fill", e.target.value)}
+                    />
+                  </label>
+                  <label style={{ display: "flex", justifyContent: "space-between" }}>
+                    <span>Stroke</span>
+                    <input
+                      type="color"
+                      style={{ ...inputBox, ...FIELD_SIZE, padding: 0 }}
+                      onChange={(e) => emitStyle("poly.stroke", e.target.value)}
+                    />
+                  </label>
+                </div>
               </div>
             </div>
-          </div>
+          )}
 
-          {/* Line style */}
-          <div style={{ borderTop: "1px solid #e5e7eb", marginTop: 12, paddingTop: 10 }}>
-            <div style={{ fontSize: 12, color: "#64748b", marginBottom: 6 }}>Line style</div>
-            <div style={{ display: "grid", gap: 8 }}>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8, alignItems: "center" }}>
-                <span style={{ fontSize: 12 }}>Color</span>
-                <input type="color" className="legend-color" onChange={(e) => emitStyle("line.color", e.target.value)} />
-              </div>
-              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
-                <span>Width</span>
-                <input
-                  type="number"
-                  min="1"
-                  defaultValue={3}
-                  style={{ ...inputBox, width: 60 }}
-                  onChange={(e) => emitStyle("line.width", Math.max(1, Number(e.target.value) || 3))}
-                />
-              </label>
-              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
-                <span>Opacity</span>
-                <input
-                  type="number"
-                  min="0"
-                  max="1"
-                  step="0.05"
-                  defaultValue={1}
-                  style={{ ...inputBox, width: 72 }}
-                  onChange={(e) => emitStyle("line.opacity", Math.max(0, Math.min(1, Number(e.target.value) || 1)))}
-                />
-              </label>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8, alignItems: "center" }}>
-                <span style={{ fontSize: 12 }}>Dash</span>
-                <input
-                  type="text"
-                  placeholder="e.g. 4,2"
-                  style={{ ...inputBox, width: 100 }}
-                  onChange={(e) => emitStyle("line.dash", e.target.value)}
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* Polygon style */}
-          <div style={{ borderTop: "1px solid #e5e7eb", marginTop: 12, paddingTop: 10 }}>
-            <div style={{ fontSize: 12, color: "#64748b", marginBottom: 6 }}>Polygon style</div>
-            <div style={{ display: "grid", gap: 8 }}>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8, alignItems: "center" }}>
-                <span style={{ fontSize: 12 }}>Fill</span>
-                <input type="color" className="legend-color" onChange={(e) => emitStyle("poly.fill", e.target.value)} />
-              </div>
-              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
-                <span>Fill opacity</span>
-                <input
-                  type="number"
-                  min="0"
-                  max="1"
-                  step="0.05"
-                  defaultValue={0.25}
-                  style={{ ...inputBox, width: 72 }}
-                  onChange={(e) => emitStyle("poly.fillOpacity", Math.max(0, Math.min(1, Number(e.target.value) || 0.25)))}
-                />
-              </label>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8, alignItems: "center" }}>
-                <span style={{ fontSize: 12 }}>Stroke</span>
-                <input type="color" className="legend-color" onChange={(e) => emitStyle("poly.stroke", e.target.value)} />
-              </div>
-              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
-                <span>Stroke width</span>
-                <input
-                  type="number"
-                  min="0"
-                  defaultValue={2}
-                  style={{ ...inputBox, width: 60 }}
-                  onChange={(e) => emitStyle("poly.width", Math.max(0, Number(e.target.value) || 2))}
-                />
-              </label>
-            </div>
-          </div>
-
-          {/* Map base layers (moved to bottom) */}
-          <div style={{ borderTop: "1px solid #e5e7eb", marginTop: 12, paddingTop: 10 }}>
+          {/* --- Map base layers --- */}
+          <div
+            style={{
+              borderTop: "1px solid #e5e7eb",
+              marginTop: 12,
+              paddingTop: 10,
+              fontFamily: FONT_STACK,
+            }}
+          >
             <div style={{ fontSize: 12, color: "#64748b", marginBottom: 6 }}>Map</div>
             <div style={{ display: "grid", gap: 6 }}>
-              {["OpenStreetMap", "Carto Voyager", "Carto Positron", "Esri WorldImagery"].map((name) => (
-                <label key={name} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <input
-                    type="radio"
-                    name="basemap"
-                    value={name}
-                    checked={baseSel === name}
-                    onChange={() => {
-                      setBaseSel(name);
-                      emitBasemap(name);
+              {["OpenStreetMap", "Carto Voyager", "Carto Positron", "Esri WorldImagery"].map(
+                (name) => (
+                  <label
+                    key={name}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                      fontFamily: FONT_STACK,
                     }}
-                  />
-                  <span>{name}</span>
-                </label>
-              ))}
+                  >
+                    <input
+                      type="radio"
+                      name="basemap"
+                      checked={baseSel === name}
+                      onChange={() => {
+                        setBaseSel(name);
+                        emitBasemap(name);
+                      }}
+                    />
+                    <span>{name}</span>
+                  </label>
+                )
+              )}
             </div>
           </div>
         </aside>
+      ) : (
+        <button
+          onClick={() => setIsOpen(true)}
+          style={reopenBtn}
+          aria-label="Open legend"
+          title="Open Legend"
+        >
+          Legend ☰
+        </button>
       )}
     </>
   );

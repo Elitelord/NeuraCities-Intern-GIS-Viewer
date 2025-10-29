@@ -2,6 +2,9 @@ import React, { useCallback, useRef, useState } from 'react';
 import { validateRawFiles } from '../utils/validateFiles';
 import { groupFilesByDataset } from '../utils/groupFilesByDataset';
 
+const FONT_STACK =
+  "'Montserrat', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif";
+
 export default function UploadDropzone({ onDatasetsReady }) {
   const inputRef = useRef(null);
   const [dragOver, setDragOver] = useState(false);
@@ -11,7 +14,6 @@ export default function UploadDropzone({ onDatasetsReady }) {
   const [showSuccess, setShowSuccess] = useState(false);
 
   const handleFiles = useCallback(async (fileList) => {
-    // ✅ Always normalize to Array first
     const files = Array.from(fileList || []);
     if (!files.length) return;
 
@@ -19,7 +21,6 @@ export default function UploadDropzone({ onDatasetsReady }) {
     setProgress(5);
     setShowSuccess(false);
 
-    // ✅ Validate the array
     const vErrs = validateRawFiles(files);
     if (vErrs.length) {
       setErrors(vErrs);
@@ -28,7 +29,6 @@ export default function UploadDropzone({ onDatasetsReady }) {
     }
     setProgress(35);
 
-    // ✅ Group using the array
     const { datasets, errors: groupErrors } = groupFilesByDataset(files);
     if (groupErrors.length) {
       setErrors(groupErrors);
@@ -37,21 +37,16 @@ export default function UploadDropzone({ onDatasetsReady }) {
 
     setUploadedFiles(files);
 
-    // Slight delay for smooth progress bar
     setTimeout(() => {
       setProgress(100);
       setShowSuccess(true);
-
-      // ✅ Emit to parent (guarded)
       if (typeof onDatasetsReady === 'function') {
         if (process.env.NODE_ENV !== 'production') {
-          // helpful while testing; remove later if you want
           // eslint-disable-next-line no-console
           console.debug('[UploadDropzone] emitting datasets:', datasets);
         }
         onDatasetsReady(datasets);
       }
-
       setTimeout(() => {
         setProgress(0);
         setShowSuccess(false);
@@ -67,12 +62,14 @@ export default function UploadDropzone({ onDatasetsReady }) {
 
   const onBrowse = (e) => {
     handleFiles(e.target.files);
-    // reset so picking same file twice still triggers onChange
     e.target.value = '';
   };
 
   return (
-    <div className="upload-wrapper max-w-4xl mx-auto pointer-events-auto z-[10001]">
+    <div
+      className="upload-wrapper max-w-4xl mx-auto pointer-events-auto z-[10001]"
+      style={{ fontFamily: FONT_STACK }}
+    >
       <div
         className={`dropzone ${dragOver ? 'drag' : ''} border-2 border-dashed rounded-2xl p-8 transition-all ${
           dragOver ? 'border-teal-500 bg-teal-50' : 'border-gray-300 bg-white hover:border-gray-400'
@@ -83,15 +80,17 @@ export default function UploadDropzone({ onDatasetsReady }) {
         onClick={() => inputRef.current?.click()}
         role="button"
         tabIndex={0}
+        style={{ fontFamily: FONT_STACK }}
       >
-        <div className="text-center font-sans">
-          <p className="dz-title text-lg font-semibold text-gray-700 mb-2">
+        <div className="text-center">
+          <p className="dz-title text-lg font-semibold text-gray-700 mb-2" style={{ fontFamily: FONT_STACK }}>
             Drag & drop GIS files here
           </p>
-          <p className="dz-sub text-gray-500 mb-4">or</p>
-          <button 
+          <p className="dz-sub text-gray-500 mb-4" style={{ fontFamily: FONT_STACK }}>or</p>
+          <button
             className="btn px-6 py-3 bg-teal-600 text-white rounded-xl hover:bg-teal-700 transition-colors font-medium"
             type="button"
+            style={{ fontFamily: FONT_STACK }}
           >
             Browse device
           </button>
@@ -104,28 +103,28 @@ export default function UploadDropzone({ onDatasetsReady }) {
             onChange={onBrowse}
             style={{ display: 'none' }}
           />
-          <p className="dz-hint text-sm text-gray-500 mt-4">
+          <p className="dz-hint text-sm text-gray-500 mt-4" style={{ fontFamily: FONT_STACK }}>
             For shapefiles, include at least <code className="bg-gray-100 px-2 py-0.5 rounded-md">.shp</code> and <code className="bg-gray-100 px-2 py-0.5 rounded-md">.dbf</code>
           </p>
-          <p className="text-xs text-gray-400 mt-2">
+          <p className="text-xs text-gray-400 mt-2" style={{ fontFamily: FONT_STACK }}>
             Max 200MB per file • Max 50 files per upload
           </p>
         </div>
       </div>
 
-      <div className="mt-4 max-h-[40vh] overflow-auto">
+      <div className="mt-4 max-h-[40vh] overflow-auto" style={{ fontFamily: FONT_STACK }}>
         {progress > 0 && (
           <div className="progress mt-6">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-sm font-medium text-gray-700">
+              <span className="text-sm font-medium text-gray-700" style={{ fontFamily: FONT_STACK }}>
                 {progress === 100 ? 'Finished: ' : 'Processing files...'}
               </span>
-              <span className="text-sm text-gray-600">{progress}%</span>
+              <span className="text-sm text-gray-600" style={{ fontFamily: FONT_STACK }}>{progress}%</span>
             </div>
             <div className="w-full bg-gray-200 rounded-full h-2.5">
-              <div 
-                className="progress-bar h-2.5 rounded-full transition-all duration-300 bg-teal-600" 
-                style={{ width: `${progress}%` }} 
+              <div
+                className="progress-bar h-2.5 rounded-full transition-all duration-300 bg-teal-600"
+                style={{ width: `${progress}%` }}
               />
             </div>
           </div>
@@ -135,8 +134,8 @@ export default function UploadDropzone({ onDatasetsReady }) {
           <div className="mt-6 bg-green-50 border border-green-200 rounded-xl p-4">
             <div className="flex items-start">
               <div>
-                <h4 className="font-semibold text-green-800">Upload Successful!</h4>
-                <p className="text-sm text-green-700 mt-1">
+                <h4 className="font-semibold text-green-800" style={{ fontFamily: FONT_STACK }}>Upload Successful!</h4>
+                <p className="text-sm text-green-700 mt-1" style={{ fontFamily: FONT_STACK }}>
                   {uploadedFiles.length} file{uploadedFiles.length !== 1 ? 's' : ''} uploaded successfully
                 </p>
               </div>
@@ -148,10 +147,12 @@ export default function UploadDropzone({ onDatasetsReady }) {
           <div className="error-box mt-6 bg-red-50 border border-red-200 rounded-xl p-4">
             <div className="flex items-start">
               <div className="flex-1">
-                <h4 className="error-title font-semibold text-red-800 mb-2">Upload issues</h4>
+                <h4 className="error-title font-semibold text-red-800 mb-2" style={{ fontFamily: FONT_STACK }}>
+                  Upload issues
+                </h4>
                 <ul className="list-disc list-inside space-y-1">
                   {errors.map((e, i) => (
-                    <li key={i} className="text-sm text-red-700">{e}</li>
+                    <li key={i} className="text-sm text-red-700" style={{ fontFamily: FONT_STACK }}>{e}</li>
                   ))}
                 </ul>
               </div>

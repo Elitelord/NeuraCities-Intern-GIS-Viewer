@@ -14,11 +14,17 @@ export default function FloatingToolbar({
   onAddNew = () => {},
   onExport = () => {},
   onRemove = () => {},
+  onToggleVisible = () => {},
 }) {
   return (
     <div
       style={{
-        // Optional wrapper styling for consistency with the app’s rounded panels
+        position: "absolute",
+        left: 16,
+        bottom: 16,
+        zIndex: 10020,
+        width: 320,
+        pointerEvents: "auto",
         borderRadius: 16,
       }}
     >
@@ -29,6 +35,7 @@ export default function FloatingToolbar({
         onAdd={onAddNew}
         onExport={onExport}
         onRemove={onRemove}
+        onToggleVisible={onToggleVisible}
       />
     </div>
   );

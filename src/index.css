@@ -1,11 +1,55 @@
+@font-face {
+  font-family: 'MontserratLocal';
+  src: url('./fonts/Montserrat-400.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'MontserratLocal';
+  src: url('./fonts/Montserrat-600.woff2') format('woff2');
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'MontserratLocal';
+  src: url('./fonts/Montserrat-700.woff2') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* switch to local family */
+:root { --font-sans: 'MontserratLocal', ui-sans-serif, system-ui, -apple-system, 'Segoe UI',
+        Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif; }
+
+
 body {
   margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+  font-family: 'Montserrat', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
     'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
     sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
+
+/* === Force Montserrat globally === */
+:root {
+  --font-sans: 'Montserrat', ui-sans-serif, system-ui, -apple-system, 'Segoe UI',
+               Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif;
+}
+
+/* Apply to everything, including Leaflet controls & form fields */
+*,
+*:where(input, button, select, textarea, label),
+.leaflet-container,
+.leaflet-control,
+.leaflet-popup-content,
+.leaflet-tooltip {
+  font-family: var(--font-sans) !important;
+}
+
 
 code {
   font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
@@ -15,6 +59,36 @@ html, body, #root {
   height: 100%;
 }
 
+/* Existing styles below unchanged ... */
+
+/* Overlay/toolbar helpers (kept from your project) */
+.toolbar-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 6px 8px;
+  background: #fff;
+  cursor: pointer;
+  text-decoration: none;
+}
+.toolbar-item:hover {
+  background: #f8fafc;
+}
+
+.btn {
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 6px 10px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.map-root {
+  position: absolute;
+  inset: 0;
+}
 
 /* Ensure overlays appear above map; this is a safeguard if Tailwind z classes differ in your build */
 #generic-map {
@@ -30,5 +104,19 @@ html, body, #root {
 /* ensure our fixed overlay is topmost fallback (only for dev/test) */
 .fixed-overlay-top {
   position: fixed !important;
-  z-index: 99999 !important;
+  z-index: 9999
+}
+
+@supports (font-variation-settings: normal) {
+  /* nothing special, just keeps Lighthouse happy for variable fonts */
+}
+
+:root {
+  --font-sans: 'Montserrat', ui-sans-serif, system-ui, -apple-system, 'Segoe UI',
+               Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif;
+}
+
+/* Make sure we beat any later-loaded CSS by being LAST + !important */
+html, body, #root, #root * {
+  font-family: var(--font-sans) !important;
 }

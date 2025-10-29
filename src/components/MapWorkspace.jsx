@@ -16,51 +16,75 @@ function setByPath(target, path, value) {
   cur[parts[parts.length - 1]] = value;
 }
 
-// Style helpers
-// theme palette
-const theme = {
-  primary: "#2C3E50",
-  secondary: "#34495E",
-  neutral: "#F5F5F5",
-  white: "#FFFFFF",
-  coral: "#008080",
-  cta: "#FF5747",
-};
-
-// then in the style helpers:
-function toPointStyle(opt = {}) {
-  const color = opt?.point?.color ?? theme.coral;
-  const radius = opt?.point?.radius ?? 6;
-  const stroke = opt?.point?.stroke ?? theme.white;
-  const strokeWidth = opt?.point?.strokeWidth ?? 1.5;
-  return { color, radius, stroke, strokeWidth };
+// Convert styleOptions to concrete style for each geometry
+function toPointStyle(styleOptions = {}) {
+  const { point = {} } = styleOptions;
+  return {
+    color: point.color || "#2563eb",
+    radius: point.radius || 6,
+    strokeWidth: point.strokeWidth || 1,
+  };
+}
+function toLineStyle(styleOptions = {}) {
+  const { line = {} } = styleOptions;
+  return {
+    color: line.color || "#10b981",
+    width: line.width || 2,
+    opacity: typeof line.opacity === "number" ? line.opacity : 0.9,
+    dashArray: line.dash || null,
+  };
+}
+function toPolyStyle(styleOptions = {}) {
+  const { poly = {} } = styleOptions;
+  return {
+    stroke: poly.stroke || "#334155",
+    width: poly.width || 1.5,
+    fill: poly.fill || "#a78bfa",
+    fillOpacity: typeof poly.fillOpacity === "number" ? poly.fillOpacity : 0.3,
+  };
 }
 
-function toLineStyle(opt = {}) {
-  const color = opt?.line?.color ?? theme.primary;
-  const width = opt?.line?.width ?? 3;
-  const dash = opt?.line?.dash ?? "";
-  const opacity = opt?.line?.opacity ?? 1;
-  return { color, width, dash, opacity };
-}
-
-function toPolyStyle(opt = {}) {
-  const fill = opt?.poly?.fill ?? theme.coral;
-  const fillOpacity = opt?.poly?.fillOpacity ?? 0.25;
-  const stroke = opt?.poly?.stroke ?? theme.primary;
-  const width = opt?.poly?.width ?? 2;
-  return { fill, fillOpacity, stroke, width };
-}
-
-
-// Build a feature collection from a dataset (if it already has geojson, use that)
-function fcFrom(d) {
-  if (!d) return null;
-  if (d.geojson && d.geojson.type === "FeatureCollection") return d.geojson;
-  if (d.geojson && d.geojson.type && d.geojson.type !== "FeatureCollection") {
-    return { type: "FeatureCollection", features: [{ type: "Feature", geometry: d.geojson, properties: {} }] };
-  }
-  return null;
+function buildLayerGroup(L, featureCollection, styles) {
+  const { point = {}, line = {}, poly = {} } = styles || {};
+  const ptStyle = {
+    radius: point.radius ?? 6,
+    color: point.color ?? "#2563eb",
+    strokeWidth: point.strokeWidth ?? 1,
+  };
+  const lnStyle = {
+    color: line.color ?? "#10b981",
+    width: line.width ?? 2,
+    opacity: line.opacity ?? 0.9,
+    dash: line.dash ?? null,
+  };
+  const pgStyle = {
+    stroke: poly.stroke ?? "#334155",
+    width: poly.width ?? 1.5,
+    fill: poly.fill ?? "#a78bfa",
+    fillOpacity: poly.fillOpacity ?? 0.3,
+  };
+  const group = L.layerGroup();
+  const pts = L.geoJSON(featureCollection, {
+    pointToLayer: (feat, latlng) =>
+      L.circleMarker(latlng, {
+        radius: ptStyle.radius,
+        color: ptStyle.color,
+        weight: ptStyle.strokeWidth,
+        fillColor: ptStyle.color,
+        fillOpacity: 0.9,
+      }),
+    filter: (f) => f?.geometry?.type === "Point" || f?.geometry?.type === "MultiPoint",
+  });
+  const lines = L.geoJSON(featureCollection, {
+    style: () => ({ color: lnStyle.color, weight: lnStyle.width, opacity: lnStyle.opacity, dashArray: lnStyle.dash }),
+    filter: (f) => f?.geometry?.type === "LineString" || f?.geometry?.type === "MultiLineString",
+  });
+  const polys = L.geoJSON(featureCollection, {
+    style: () => ({ color: pgStyle.stroke, weight: pgStyle.width, fillColor: pgStyle.fill, fillOpacity: pgStyle.fillOpacity }),
+    filter: (f) => f?.geometry?.type === "Polygon" || f?.geometry?.type === "MultiPolygon",
+  });
+  pts.addTo(group); lines.addTo(group); polys.addTo(group);
+  return group;
 }
 
 export default function MapWorkspace({ datasets = [], active = null, styleOptions = {} }) {
@@ -69,6 +93,7 @@ export default function MapWorkspace({ datasets = [], active = null, styleOption
 
   const baseRefs = useRef({}); // base tile layers (name -> layer)
   const overlayRefs = useRef({ points: null, lines: null, polys: null, connect: null });
+  const datasetLayersRef = useRef({}); // uid -> L.LayerGroup
   const layersCtrlRef = useRef(null);
 
   const [internalFC, setInternalFC] = useState(null);
@@ -82,7 +107,7 @@ export default function MapWorkspace({ datasets = [], active = null, styleOption
     connect: false,
   });
 
-  // Handle overlay toggle events from legend
+  // Handle overlay toggle events from legend (kept for geometry layers if you ever re-enable)
   useEffect(() => {
     const onToggle = (e) => {
       const { layer, enabled } = (e && e.detail) || {};
@@ -93,116 +118,44 @@ export default function MapWorkspace({ datasets = [], active = null, styleOption
       if (!map || !refs) return;
       const lyr = refs[layer];
       if (!lyr) return;
-      if (enabled) {
-        if (!map.hasLayer(lyr)) lyr.addTo(map);
-      } else {
-        if (map.hasLayer(lyr)) map.removeLayer(lyr);
-      }
+      try {
+        if (enabled) {
+          if (!map.hasLayer(lyr)) lyr.addTo(map);
+        } else {
+          if (map.hasLayer(lyr)) map.removeLayer(lyr);
+        }
+      } catch {}
     };
     window.addEventListener("overlay:toggle", onToggle);
     return () => window.removeEventListener("overlay:toggle", onToggle);
   }, []);
 
-  // Live style updates from legend
+  // Handle basemap selection events
   useEffect(() => {
-    const onStyle = (e) => {
-      if (!e?.detail) return;
-      setLiveStyle((prev) => {
-        const next = JSON.parse(JSON.stringify(prev || {}));
-        setByPath(next, e.detail.path, e.detail.value);
-        return next;
-      });
-    };
-    window.addEventListener("geojson:style", onStyle);
-    return () => window.removeEventListener("geojson:style", onStyle);
-  }, []);
-
-  // Handle external clear (if used)
-  useEffect(() => {
-    const onClear = () => {
-      const map = mapRef.current;
-      if (!map) return;
-      Object.values(overlayRefs.current).forEach((lyr) => {
-        if (lyr && map.hasLayer(lyr)) map.removeLayer(lyr);
-      });
-      overlayRefs.current = { points: null, lines: null, polys: null, connect: null };
-      /* Layer control removed in onClear */
-    };
-    window.addEventListener("map:clear", onClear);
-    return () => window.removeEventListener("map:clear", onClear);
-  }, []);
-
-  // merge styleOptions prop into liveStyle whenever prop changes
-  useEffect(() => setLiveStyle((prev) => ({ ...prev, ...styleOptions })), [styleOptions]);
-
-  // Choose active FeatureCollection
-  const activeFC = useMemo(() => {
-    if (active) {
-      const a = fcFrom(active);
-      if (a) return a;
-      const match = datasets.find((d) => d.uid && active.uid && d.uid === active.uid);
-      const m = fcFrom(match);
-      return m || null;
-    }
-    for (const d of datasets) {
-      const f = fcFrom(d);
-      if (f) return f;
-    }
-    return internalFC || null;
-  }, [active, datasets, internalFC]);
-
-  // Init map and base layers
-  useEffect(() => {
-    if (mapRef.current || !mapEl.current) return;
-
-    const map = L.map(mapEl.current, { center: [30.2672, -97.7431], zoom: 10, zoomControl: false,
-      attributionControl: false });
-    mapRef.current = map;
-
-    // Define base maps (all created, but only default is added)
-    const bases = {
-      "OpenStreetMap": L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-        maxZoom: 19,
-        attribution: "&copy; OpenStreetMap contributors",
-        subdomains: "abc",
-      }),
-      "Carto Voyager": L.tileLayer(
-        "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png",
-        {
-          maxZoom: 20,
-          attribution: "&copy; OpenStreetMap &copy; CARTO",
-          subdomains: "abcd",
-        }
-      ),
-      "Carto Positron": L.tileLayer(
-        "https://{s}.basemaps.cartocdn.com/rastertiles/light_all/{z}/{x}/{y}{r}.png",
-        {
-          maxZoom: 20,
-          attribution: "&copy; OpenStreetMap &copy; CARTO",
-          subdomains: "abcd",
-        }
-      ),
-      "Esri WorldImagery": L.tileLayer(
-        "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-        { maxZoom: 20, attribution: "Tiles &copy; Esri" }
-      ),
-    };
-    baseRefs.current = bases;
-
-    // Add default base
-    bases["OpenStreetMap"].addTo(map);
-
-    // Listen for basemap changes from legend
     const onBasemap = (e) => {
-      const name = e?.detail?.name;
-      if (!name || !baseRefs.current[name]) return;
-      Object.entries(baseRefs.current).forEach(([n, layer]) => {
-        if (n === name) {
-          if (!map.hasLayer(layer)) layer.addTo(map);
-        } else {
+      const { name } = (e && e.detail) || {};
+      const map = mapRef.current;
+      if (!map || !name) return;
+      // Create tiles lazily
+      if (!baseRefs.current[name]) {
+        let url = "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png";
+        if (name === "Carto Voyager") url = "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png";
+        if (name === "Carto Positron") url = "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png";
+        if (name === "Esri WorldImagery") url = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
+
+        baseRefs.current[name] = L.tileLayer(url, { attribution: "" });
+      }
+      // Remove the existing base layer (first/only tile layer on map)
+      Object.values(baseRefs.current).forEach((layer) => {
+        try {
           if (map.hasLayer(layer)) map.removeLayer(layer);
-        }
+        } catch {}
       });
+      // Add selected base layer
+      const layer = baseRefs.current[name];
+      if (layer) {
+        layer.addTo(map);
+      }
     };
     window.addEventListener("basemap:select", onBasemap);
 
@@ -211,85 +164,78 @@ export default function MapWorkspace({ datasets = [], active = null, styleOption
     };
   }, []);
 
-  // (Re)draw overlays from activeFC + liveStyle
+  // Create map on mount
+  useEffect(() => {
+    if (mapRef.current) return;
+    const map = L.map(mapEl.current, {
+      center: [30.2672, -97.7431],
+      zoom: 11,
+    });
+    mapRef.current = map;
+
+    // default basemap
+    const osm = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { attribution: "" });
+    osm.addTo(map);
+
+    // listen for style updates to apply live to active dataset
+    const onStyle = (e) => {
+      const { path, value } = (e && e.detail) || {};
+      if (!path) return;
+      setLiveStyle((prev) => {
+        const next = { ...prev };
+        setByPath(next, path, value);
+        return next;
+      });
+    };
+    window.addEventListener("geojson:style", onStyle);
+
+    // cleanup
+    return () => {
+      window.removeEventListener("geojson:style", onStyle);
+      map.remove();
+    };
+  }, []);
+
+  // (Re)draw overlays from all visible datasets; active uses liveStyle
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
 
-    // Remove existing overlay layers
-    Object.values(overlayRefs.current).forEach((lyr) => {
-      if (lyr && map.hasLayer(lyr)) map.removeLayer(lyr);
+    // Remove previous dataset groups
+    Object.values(datasetLayersRef.current).forEach((g) => {
+      try { map.removeLayer(g); } catch {}
     });
-    overlayRefs.current = { points: null, lines: null, polys: null, connect: null };
+    datasetLayersRef.current = {};
 
-    if (!activeFC) return;
-    const ptStyle = toPointStyle(liveStyle);
-    const lnStyle = toLineStyle(liveStyle);
-    const pgStyle = toPolyStyle(liveStyle);
+    const visible = (datasets || []).filter(d => d && d.geojson && (d.visible !== false));
+    if (!visible.length) return;
 
-    const points = L.geoJSON(activeFC, {
-      pointToLayer: (feat, latlng) =>
-        L.circleMarker(latlng, {
-          radius: ptStyle.radius,
-          color: ptStyle.color,
-          weight: ptStyle.strokeWidth,
-          fillColor: ptStyle.color,
-          fillOpacity: 0.9,
-        }),
-      filter: (f) => f?.geometry?.type === "Point" || f?.geometry?.type === "MultiPoint",
-    }).addTo(map);
+    const activeId = active && active.uid;
+    const boundsList = [];
 
-    const lines = L.geoJSON(activeFC, {
-      style: () => ({ color: lnStyle.color, weight: lnStyle.width, opacity: lnStyle.opacity, dashArray: lnStyle.dash }),
-      filter: (f) => f?.geometry?.type === "LineString" || f?.geometry?.type === "MultiLineString",
-    }).addTo(map);
+    visible.forEach(d => {
+      const styles = d.uid === activeId ? liveStyle : {};
+      const group = buildLayerGroup(L, d.geojson, styles);
+      group.addTo(map);
+      datasetLayersRef.current[d.uid] = group;
+      try {
+        const b = L.geoJSON(d.geojson).getBounds();
+        if (b && b.isValid()) boundsList.push(b);
+      } catch {}
+    });
 
-    const polys = L.geoJSON(activeFC, {
-      style: () => ({ color: pgStyle.stroke, weight: pgStyle.width, fillColor: pgStyle.fill, fillOpacity: pgStyle.fillOpacity }),
-      filter: (f) =>
-        f?.geometry?.type === "Polygon" ||
-        f?.geometry?.type === "MultiPolygon",
-    }).addTo(map);
-
-    // Optional: connect points (simple polyline across point centroids)
-    let connect = null;
+    // Fit bounds (prefer active)
     try {
-      const pts = [];
-      activeFC.features?.forEach((feat) => {
-        if (feat?.geometry?.type === "Point" && Array.isArray(feat.geometry.coordinates)) {
-          const [x, y] = feat.geometry.coordinates;
-          pts.push([y, x]);
-        }
-      });
-      if (pts.length > 1) {
-        connect = L.polyline(pts, {
-          color: lnStyle.color,
-          weight: lnStyle.width,
-          opacity: lnStyle.opacity,
-          dashArray: lnStyle.dash,
-        });
-        connect.addTo(map);
+      let fit = null;
+      if (activeId && datasetLayersRef.current[activeId]) {
+        fit = datasetLayersRef.current[activeId].getBounds?.();
       }
+      if (!fit || !fit.isValid()) {
+        fit = boundsList.reduce((acc, b) => (acc ? acc.extend(b) : b), null);
+      }
+      if (fit && fit.isValid()) map.fitBounds(fit.pad(0.1));
     } catch {}
-
-    // Respect visibility toggles
-    if (!overlayVisible.points && map.hasLayer(points)) map.removeLayer(points);
-    if (!overlayVisible.lines && map.hasLayer(lines)) map.removeLayer(lines);
-    if (!overlayVisible.polys && map.hasLayer(polys)) map.removeLayer(polys);
-    if (connect && !overlayVisible.connect && map.hasLayer(connect)) map.removeLayer(connect);
-
-    // Remove Leaflet UI layer control in favor of UnifiedLegend toggles
-    layersCtrlRef.current?.remove();
-    /* Layer control removed in favor of UnifiedLegend toggles */
-
-    overlayRefs.current = { points, lines, polys, connect };
-
-    // Fit bounds to data
-    try {
-      const b = L.geoJSON(activeFC).getBounds();
-      if (b && b.isValid()) map.fitBounds(b.pad(0.1));
-    } catch {}
-  }, [activeFC, liveStyle, overlayVisible]);
+  }, [datasets, active, liveStyle]);
 
   return <div ref={mapEl} style={{ height: "100%", width: "100%" }} aria-label="Map" />;
 }
