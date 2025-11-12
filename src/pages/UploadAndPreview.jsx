@@ -161,12 +161,14 @@ export default function UploadAndPreview() {
   const {
     filteredDatasets,
     domain,
+    rangeStart, rangeEnd, setRangeStart, setRangeEnd,
     cursor,
     setCursor,
     playing,
     setPlaying,
     setSpeed,
     setWindowSec,
+    playMode, setPlayMode,
   } = useTimeFilter(visibleDatasets, selectedField, { windowSec: 60, speed: 1 });
 
   // auto-pick a likely time field once
@@ -199,17 +201,19 @@ export default function UploadAndPreview() {
             selectedField,
             setSelectedField,
             domain,
+            rangeStart, rangeEnd, setRangeStart, setRangeEnd,
             cursor,
             setCursor,
             playing,
             setPlaying,
             setSpeed,
             setWindowSec,
+            playMode, setPlayMode,
           }}
         />
       )}
 
-      <div className="map-root">
+      <div className="map-root" style={{ position: "fixed", inset: 0, zIndex: 1 }}>
         <MapWorkspace
           datasets={filteredDatasets}
           active={activeForMap}

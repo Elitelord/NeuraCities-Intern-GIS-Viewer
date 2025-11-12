@@ -1,7 +1,6 @@
 // src/hooks/useTimeFilter.js
 import { useEffect, useMemo, useRef, useState } from "react";
 
-// parse to epoch ms (number | ISO string)
 function toEpoch(v) {
   if (v == null) return null;
   if (typeof v === "number") return Number.isFinite(v) ? v : null;
@@ -10,29 +9,19 @@ function toEpoch(v) {
 }
 
 /**
- * useTimeFilter
- * - datasets: [{ uid, geojson, visible }]
- * - selectedField: string | null   (property name holding timestamp)
- * - opts:
- *     windowSec: size of moving window in seconds (default 60)
- *     speed:     multiplier of how many windows per second to advance (default 1)
- *
- * Returns:
- *   filteredDatasets, domain [min,max], cursor, setCursor, playing, setPlaying,
- *   setSpeed(newSpeed), setWindowSec(newSec)
+ * Adds playMode:
+ *  - "all": ignore brush for playback + filtering (whole domain)
+ *  - "window": use [rangeStart, rangeEnd] for playback + filtering
  */
-export default function useTimeFilter(
-  datasets,
-  selectedField,
-  opts = {}
-) {
+export default function useTimeFilter(datasets, selectedField, opts = {}) {
   const { windowSec = 60, speed = 1 } = opts;
-
-  // internal, but expose setters for UI
   const [windowSizeSec, setWindowSec] = useState(windowSec);
   const [speedFactor, setSpeed] = useState(speed);
 
-  // Build per-dataset arrays of {f, ts}
+  // NEW: play scope
+  const [playMode, setPlayMode] = useState("window"); // default to window (kepler-like)
+
+  // index timestamps
   const indexed = useMemo(() => {
     if (!selectedField) return null;
     return (datasets || []).map((d) => {
@@ -47,87 +36,98 @@ export default function useTimeFilter(
     });
   }, [datasets, selectedField]);
 
-  // [min,max] across all visible features
   const domain = useMemo(() => {
     if (!indexed) return null;
-    let min = Infinity,
-      max = -Infinity;
-    indexed.forEach((bin) =>
-      bin.feats.forEach(({ ts }) => {
-        if (ts < min) min = ts;
-        if (ts > max) max = ts;
-      })
-    );
+    let min = Infinity, max = -Infinity;
+    indexed.forEach((bin) => bin.feats.forEach(({ ts }) => {
+      if (ts < min) min = ts;
+      if (ts > max) max = ts;
+    }));
     if (!Number.isFinite(min) || !Number.isFinite(max)) return null;
     return [min, max];
   }, [indexed]);
 
-  // cursor = start of current window (auto-init to earliest)
-  const [cursor, setCursor] = useState(null);
+  // brush
+  const [rangeStart, setRangeStart] = useState(null);
+  const [rangeEnd, setRangeEnd] = useState(null);
   useEffect(() => {
-    if (domain) setCursor(domain[0]);
+    if (!domain) { setRangeStart(null); setRangeEnd(null); return; }
+    const [dmin, dmax] = domain;
+    setRangeStart((p) => (p == null ? dmin : Math.max(dmin, Math.min(p, dmax))));
+    setRangeEnd((p) => (p == null ? dmax : Math.max(dmin, Math.min(p, dmax))));
   }, [domain]);
+
+  // cursor
+  const [cursor, setCursor] = useState(null);
+  useEffect(() => { if (domain) setCursor(domain[0]); }, [domain]);
+
+  // keep cursor bounded appropriately for current mode
+  useEffect(() => {
+    if (!domain) return;
+    const [dmin, dmax] = domain;
+    setCursor((c) => {
+      if (c == null) return c;
+      if (playMode === "window" && rangeStart != null && rangeEnd != null) {
+        return Math.max(rangeStart, Math.min(c, rangeEnd));
+      }
+      return Math.max(dmin, Math.min(c, dmax));
+    });
+  }, [playMode, rangeStart, rangeEnd, domain]);
 
   const [playing, setPlaying] = useState(false);
   const rafRef = useRef(null);
 
-  // advance cursor while playing
+  // advance cursor respecting mode
   useEffect(() => {
     if (!playing || !domain || cursor == null) return;
     let last = performance.now();
-
     const step = (now) => {
-      const dt = now - last;
-      last = now;
-
-      // Move by (window per second) * speedFactor
+      const dt = now - last; last = now;
       const winMs = windowSizeSec * 1000;
       const delta = (dt / 1000) * (winMs * Math.max(0.1, speedFactor));
 
-      const [min, max] = domain;
+      const [dmin, dmax] = domain;
+      const endCap = playMode === "window"
+        ? (rangeEnd ?? dmax)
+        : dmax;
+
       let next = cursor + delta;
-      if (next > max) next = min; // wrap
+      if (next > endCap) next = endCap;
 
       setCursor(next);
       rafRef.current = requestAnimationFrame(step);
     };
-
     rafRef.current = requestAnimationFrame(step);
     return () => cancelAnimationFrame(rafRef.current);
-  }, [playing, domain, cursor, windowSizeSec, speedFactor]);
+  }, [playing, domain, cursor, windowSizeSec, speedFactor, playMode, rangeEnd]);
 
-  // Slice features into [cursor, cursor+window]
-  // src/components/useTimeFilter.js  (or wherever you placed it)
-
-  // CUMULATIVE filter: show everything up to the current cursor
+  // filtering (cumulative up to cursor) in chosen scope
   const filtered = useMemo(() => {
-    if (!indexed || !domain || cursor == null) return datasets;
-    const end = cursor; // everything at or before this time stays on
+    if (!indexed || !domain) return datasets;
+
+    const [dmin, dmax] = domain;
+    const lo = playMode === "window" ? (rangeStart ?? dmin) : dmin;
+    const hi = playMode === "window" ? (rangeEnd ?? dmax) : dmax;
+    const cutoff = cursor ?? hi;
 
     return (datasets || []).map((d) => {
       const bin = indexed.find((b) => b.uid === d.uid);
       if (!bin) return d;
-
       const vis = bin.feats
-        .filter(({ ts }) => ts <= end)
+        .filter(({ ts }) => ts >= lo && ts <= hi)
+        .filter(({ ts }) => ts <= cutoff)
         .map(({ f }) => f);
-
-      return {
-        ...d,
-        geojson: { type: "FeatureCollection", features: vis },
-      };
+      return { ...d, geojson: { type: "FeatureCollection", features: vis } };
     });
-  }, [datasets, indexed, cursor, domain]);
-
+  }, [datasets, indexed, domain, rangeStart, rangeEnd, cursor, playMode]);
 
   return {
     filteredDatasets: filtered,
     domain,
-    cursor,
-    setCursor,
-    playing,
-    setPlaying,
-    setSpeed,      // call with e.g. 0.5, 1, 2, 4
-    setWindowSec,  // call with e.g. 30, 60, 300
+    rangeStart, rangeEnd, setRangeStart, setRangeEnd,
+    cursor, setCursor,
+    playing, setPlaying,
+    setSpeed, setWindowSec,
+    playMode, setPlayMode,            // ← expose new toggle
   };
 }

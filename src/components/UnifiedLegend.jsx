@@ -204,6 +204,13 @@ export default function UnifiedLegend({
         <div style={{ borderTop: "1px solid #e5e7eb", marginTop: 12, paddingTop: 10 }}>
           <TimePlayer
             domain={time.domain}
+            // ↓ pass the brush range props so the single-track timeline works
+            rangeStart={time.rangeStart}
+            rangeEnd={time.rangeEnd}
+            setRangeStart={time.setRangeStart}
+            setRangeEnd={time.setRangeEnd}
+            playMode={time.playMode}
+            setPlayMode={time.setPlayMode}
             cursor={time.cursor}
             setCursor={time.setCursor}
             playing={time.playing}
