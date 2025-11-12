@@ -1,9 +1,9 @@
 // src/components/MapWorkspace.jsx
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 
-// Helper: safely set nested value by path, e.g. setByPath(obj, "point.color", "#ff0")
+// safely set nested value by path, e.g. setByPath(obj, "point.color", "#ff0")
 function setByPath(target, path, value) {
   if (!path || typeof path !== "string") return;
   const parts = path.split(".");
@@ -16,35 +16,19 @@ function setByPath(target, path, value) {
   cur[parts[parts.length - 1]] = value;
 }
 
-// Convert styleOptions to concrete style for each geometry
-function toPointStyle(styleOptions = {}) {
-  const { point = {} } = styleOptions;
-  return {
-    color: point.color || "#2563eb",
-    radius: point.radius || 6,
-    strokeWidth: point.strokeWidth || 1,
-  };
-}
-function toLineStyle(styleOptions = {}) {
-  const { line = {} } = styleOptions;
-  return {
-    color: line.color || "#10b981",
-    width: line.width || 2,
-    opacity: typeof line.opacity === "number" ? line.opacity : 0.9,
-    dashArray: line.dash || null,
-  };
-}
-function toPolyStyle(styleOptions = {}) {
-  const { poly = {} } = styleOptions;
-  return {
-    stroke: poly.stroke || "#334155",
-    width: poly.width || 1.5,
-    fill: poly.fill || "#a78bfa",
-    fillOpacity: typeof poly.fillOpacity === "number" ? poly.fillOpacity : 0.3,
-  };
+function parseTimeMaybe(v) {
+  if (v == null) return NaN;
+  if (typeof v === "number") return v; // assume epoch ms
+  if (typeof v === "string") {
+    const num = Number(v);
+    if (!Number.isNaN(num) && v.trim() !== "") return num;
+    const t = Date.parse(v);
+    return Number.isNaN(t) ? NaN : t;
+  }
+  return NaN;
 }
 
-function buildLayerGroup(L, featureCollection, styles) {
+function buildLayerGroup(L, featureCollection, styles, filterFn) {
   const { point = {}, line = {}, poly = {} } = styles || {};
   const ptStyle = {
     radius: point.radius ?? 6,
@@ -54,16 +38,22 @@ function buildLayerGroup(L, featureCollection, styles) {
   const lnStyle = {
     color: line.color ?? "#10b981",
     width: line.width ?? 2,
-    opacity: line.opacity ?? 0.9,
-    dash: line.dash ?? null,
+    opacity: typeof line.opacity === "number" ? line.opacity : 0.9,
+    dashArray: line.dash ?? null,
   };
   const pgStyle = {
     stroke: poly.stroke ?? "#334155",
     width: poly.width ?? 1.5,
     fill: poly.fill ?? "#a78bfa",
-    fillOpacity: poly.fillOpacity ?? 0.3,
+    fillOpacity:
+      typeof poly.fillOpacity === "number" ? poly.fillOpacity : 0.3,
   };
+
   const group = L.layerGroup();
+
+  const baseFilter = (f, types) =>
+    types.includes(f?.geometry?.type) && (!filterFn || filterFn(f));
+
   const pts = L.geoJSON(featureCollection, {
     pointToLayer: (feat, latlng) =>
       L.circleMarker(latlng, {
@@ -73,111 +63,97 @@ function buildLayerGroup(L, featureCollection, styles) {
         fillColor: ptStyle.color,
         fillOpacity: 0.9,
       }),
-    filter: (f) => f?.geometry?.type === "Point" || f?.geometry?.type === "MultiPoint",
+    filter: (f) => baseFilter(f, ["Point", "MultiPoint"]),
   });
+
   const lines = L.geoJSON(featureCollection, {
-    style: () => ({ color: lnStyle.color, weight: lnStyle.width, opacity: lnStyle.opacity, dashArray: lnStyle.dash }),
-    filter: (f) => f?.geometry?.type === "LineString" || f?.geometry?.type === "MultiLineString",
+    style: () => ({
+      color: lnStyle.color,
+      weight: lnStyle.width,
+      opacity: lnStyle.opacity,
+      dashArray: lnStyle.dash,
+    }),
+    filter: (f) => baseFilter(f, ["LineString", "MultiLineString"]),
   });
+
   const polys = L.geoJSON(featureCollection, {
-    style: () => ({ color: pgStyle.stroke, weight: pgStyle.width, fillColor: pgStyle.fill, fillOpacity: pgStyle.fillOpacity }),
-    filter: (f) => f?.geometry?.type === "Polygon" || f?.geometry?.type === "MultiPolygon",
+    style: () => ({
+      color: pgStyle.stroke,
+      weight: pgStyle.width,
+      fillColor: pgStyle.fill,
+      fillOpacity: pgStyle.fillOpacity,
+    }),
+    filter: (f) => baseFilter(f, ["Polygon", "MultiPolygon"]),
   });
-  pts.addTo(group); lines.addTo(group); polys.addTo(group);
+
+  pts.addTo(group);
+  lines.addTo(group);
+  polys.addTo(group);
   return group;
 }
 
-export default function MapWorkspace({ datasets = [], active = null, styleOptions = {} }) {
+export default function MapWorkspace({
+  datasets = [],
+  active = null,
+  styleOptions = {},
+  // NEW: only fit once, keep overview during playback
+  fitOnFirstData = true,
+}) {
   const mapRef = useRef(null);
   const mapEl = useRef(null);
 
-  const baseRefs = useRef({}); // base tile layers (name -> layer)
-  const overlayRefs = useRef({ points: null, lines: null, polys: null, connect: null });
+  const baseRefs = useRef({}); // name -> base layer
   const datasetLayersRef = useRef({}); // uid -> L.LayerGroup
-  const layersCtrlRef = useRef(null);
 
-  const [internalFC, setInternalFC] = useState(null);
   const [liveStyle, setLiveStyle] = useState(styleOptions || {});
-
-  // Overlay visibility (legend checkboxes)
-  const [overlayVisible, setOverlayVisible] = useState({
-    points: true,
-    lines: true,
-    polys: true,
-    connect: false,
+  const [timeFilter, setTimeFilter] = useState({
+    field: null,
+    start: null,
+    end: null,
   });
 
-  // Handle overlay toggle events from legend (kept for geometry layers if you ever re-enable)
+  // NEW: remember if we've already auto-fitted
+  const didFitRef = useRef(false);
+
+  // Reset the fit flag if all data disappears (so next load fits once again)
   useEffect(() => {
-    const onToggle = (e) => {
-      const { layer, enabled } = (e && e.detail) || {};
-      if (!layer) return;
-      setOverlayVisible((prev) => ({ ...prev, [layer]: enabled }));
-      const map = mapRef.current;
-      const refs = overlayRefs.current;
-      if (!map || !refs) return;
-      const lyr = refs[layer];
-      if (!lyr) return;
-      try {
-        if (enabled) {
-          if (!map.hasLayer(lyr)) lyr.addTo(map);
-        } else {
-          if (map.hasLayer(lyr)) map.removeLayer(lyr);
-        }
-      } catch {}
-    };
-    window.addEventListener("overlay:toggle", onToggle);
-    return () => window.removeEventListener("overlay:toggle", onToggle);
-  }, []);
+    if (!datasets || datasets.length === 0) didFitRef.current = false;
+  }, [datasets?.length]);
 
-  // Handle basemap selection events
-  useEffect(() => {
-    const onBasemap = (e) => {
-      const { name } = (e && e.detail) || {};
-      const map = mapRef.current;
-      if (!map || !name) return;
-      // Create tiles lazily
-      if (!baseRefs.current[name]) {
-        let url = "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png";
-        if (name === "Carto Voyager") url = "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png";
-        if (name === "Carto Positron") url = "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png";
-        if (name === "Esri WorldImagery") url = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
-
-        baseRefs.current[name] = L.tileLayer(url, { attribution: "" });
-      }
-      // Remove the existing base layer (first/only tile layer on map)
-      Object.values(baseRefs.current).forEach((layer) => {
-        try {
-          if (map.hasLayer(layer)) map.removeLayer(layer);
-        } catch {}
-      });
-      // Add selected base layer
-      const layer = baseRefs.current[name];
-      if (layer) {
-        layer.addTo(map);
-      }
-    };
-    window.addEventListener("basemap:select", onBasemap);
-
-    return () => {
-      window.removeEventListener("basemap:select", onBasemap);
-    };
-  }, []);
-
-  // Create map on mount
+  // Create map once
   useEffect(() => {
     if (mapRef.current) return;
-    const map = L.map(mapEl.current, {
+    const el = mapEl.current;
+    if (!el) return;
+
+    const map = L.map(el, {
       center: [30.2672, -97.7431],
       zoom: 11,
+      preferCanvas: false,
     });
     mapRef.current = map;
 
     // default basemap
-    const osm = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { attribution: "" });
+    const osm = L.tileLayer(
+      "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+      { attribution: "&copy; OpenStreetMap contributors" }
+    );
     osm.addTo(map);
+    baseRefs.current["OpenStreetMap"] = osm;
 
-    // listen for style updates to apply live to active dataset
+    // ensure vector renderer exists
+    L.svg().addTo(map);
+
+    const invalidate = () => {
+      try {
+        map.invalidateSize(false);
+      } catch {}
+    };
+    invalidate();
+    setTimeout(invalidate, 0);
+    window.addEventListener("resize", invalidate);
+
+    // style updates
     const onStyle = (e) => {
       const { path, value } = (e && e.detail) || {};
       if (!path) return;
@@ -189,53 +165,129 @@ export default function MapWorkspace({ datasets = [], active = null, styleOption
     };
     window.addEventListener("geojson:style", onStyle);
 
-    // cleanup
+    // basemap selection
+    const onBasemap = (e) => {
+      const { name } = (e && e.detail) || {};
+      const map = mapRef.current;
+      if (!map || !name) return;
+
+      if (!baseRefs.current[name]) {
+        let url = "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png";
+        if (name === "Carto Voyager")
+          url =
+            "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png";
+        if (name === "Carto Positron")
+          url =
+            "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png";
+        if (name === "Esri WorldImagery")
+          url =
+            "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
+        baseRefs.current[name] = L.tileLayer(url, { attribution: "" });
+      }
+
+      Object.values(baseRefs.current).forEach((layer) => {
+        try {
+          if (map.hasLayer(layer)) map.removeLayer(layer);
+        } catch {}
+      });
+
+      const layer = baseRefs.current[name];
+      if (layer) layer.addTo(map);
+    };
+    window.addEventListener("basemap:select", onBasemap);
+
+    // time updates (optional; kept for compatibility)
+    const onTime = (e) => {
+      const { field = null, start = null, end = null } = (e && e.detail) || {};
+      setTimeFilter({ field, start, end });
+    };
+    window.addEventListener("time:update", onTime);
+
     return () => {
+      window.removeEventListener("resize", invalidate);
       window.removeEventListener("geojson:style", onStyle);
-      map.remove();
+      window.removeEventListener("basemap:select", onBasemap);
+      window.removeEventListener("time:update", onTime);
+      try {
+        map.remove();
+      } catch {}
     };
   }, []);
 
-  // (Re)draw overlays from all visible datasets; active uses liveStyle
+  // (Re)draw data layers
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
 
-    // Remove previous dataset groups
+    // Clear previous dataset groups
     Object.values(datasetLayersRef.current).forEach((g) => {
-      try { map.removeLayer(g); } catch {}
+      try {
+        map.removeLayer(g);
+      } catch {}
     });
     datasetLayersRef.current = {};
 
-    const visible = (datasets || []).filter(d => d && d.geojson && (d.visible !== false));
+    const visible = (datasets || []).filter(
+      (d) => d && d.geojson && d.visible !== false
+    );
     if (!visible.length) return;
 
     const activeId = active && active.uid;
     const boundsList = [];
 
-    visible.forEach(d => {
+    // optional time predicate
+    let filterFn = null;
+    if (timeFilter.field && timeFilter.start != null && timeFilter.end != null) {
+      const start =
+        typeof timeFilter.start === "number"
+          ? timeFilter.start
+          : Date.parse(timeFilter.start);
+      const end =
+        typeof timeFilter.end === "number"
+          ? timeFilter.end
+          : Date.parse(timeFilter.end);
+      filterFn = (f) => {
+        const v = f?.properties?.[timeFilter.field];
+        const t = parseTimeMaybe(v);
+        return !Number.isNaN(t) && t >= start && t <= end;
+      };
+    }
+
+    visible.forEach((d) => {
       const styles = d.uid === activeId ? liveStyle : {};
-      const group = buildLayerGroup(L, d.geojson, styles);
+      const group = buildLayerGroup(L, d.geojson, styles, filterFn);
       group.addTo(map);
       datasetLayersRef.current[d.uid] = group;
       try {
-        const b = L.geoJSON(d.geojson).getBounds();
+        const b = L.geoJSON(d.geojson).getBounds?.();
         if (b && b.isValid()) boundsList.push(b);
       } catch {}
     });
 
-    // Fit bounds (prefer active)
-    try {
-      let fit = null;
-      if (activeId && datasetLayersRef.current[activeId]) {
-        fit = datasetLayersRef.current[activeId].getBounds?.();
-      }
-      if (!fit || !fit.isValid()) {
-        fit = boundsList.reduce((acc, b) => (acc ? acc.extend(b) : b), null);
-      }
-      if (fit && fit.isValid()) map.fitBounds(fit.pad(0.1));
-    } catch {}
-  }, [datasets, active, liveStyle]);
+    // ▶ Fit only once (first time we have data), then never again
+    if (fitOnFirstData && !didFitRef.current) {
+      try {
+        let fit = null;
+        if (activeId && datasetLayersRef.current[activeId]) {
+          fit = datasetLayersRef.current[activeId].getBounds?.();
+        }
+        if (!fit || !fit.isValid()) {
+          fit = boundsList.reduce((acc, b) => (acc ? acc.extend(b) : b), null);
+        }
+        if (fit && fit.isValid()) {
+          map.fitBounds(fit.pad(0.1));
+          didFitRef.current = true; // mark as done
+        }
+      } catch {}
+    }
+  }, [datasets, active, liveStyle, timeFilter, fitOnFirstData]);
 
-  return <div ref={mapEl} style={{ height: "100%", width: "100%" }} aria-label="Map" />;
+  return (
+    <div
+      ref={mapEl}
+      id="generic-map"
+      style={{ height: "100%", width: "100%" }}
+      aria-label="Map"
+    />
+  );
 }
