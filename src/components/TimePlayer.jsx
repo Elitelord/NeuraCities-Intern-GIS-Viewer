@@ -40,8 +40,34 @@ export default function TimePlayer({
 
   const [min, max] = domain;
   const enableRange = typeof setRangeStart === "function" && typeof setRangeEnd === "function";
-  const start = enableRange ? (rangeStart ?? min) : min;
-  const end   = enableRange ? (rangeEnd   ?? max) : max;
+
+  const baseStart = enableRange ? (rangeStart ?? min) : min;
+  const baseEnd   = enableRange ? (rangeEnd   ?? max) : max;
+
+  // visual window on the brush
+  let start = baseStart;
+  let end   = baseEnd;
+
+  if (playMode === "moving" && enableRange) {
+    // keep the same width as the user-defined brush and slide it with the cursor
+    const width = Math.max(1, baseEnd - baseStart);
+    const endPos = cursor ?? baseEnd;
+    let startPos = endPos - width;
+
+    // clamp the sliding window into the overall domain
+    if (startPos < min) {
+      startPos = min;
+    } else if (startPos + width > max) {
+      startPos = max - width;
+    }
+
+    start = startPos;
+    end = startPos + width;
+  } else if (playMode === "all" && enableRange) {
+    // show the full timeline when in "Full timeline" mode
+    start = min;
+    end = max;
+  }
 
   // brush internals
   const trackRef = useRef(null);
@@ -126,6 +152,7 @@ export default function TimePlayer({
         border: "1px solid #cbd5e1",
         background: playMode === value ? "#0ea5e9" : "#fff",
         color: playMode === value ? "#fff" : "#0f172a",
+        fontFamily: "Montserrat, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
       }}
     >
       {label}
@@ -137,7 +164,14 @@ export default function TimePlayer({
       {/* row 1: title + play */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
         <div style={{ fontWeight: 600 }}>Time</div>
-        <button onClick={() => setPlaying(p => !p)} className="btn" style={{ padding: "4px 10px" }}>
+        <button
+          onClick={() => setPlaying(p => !p)}
+          className="btn"
+          style={{
+            padding: "4px 10px",
+            fontFamily: "Montserrat, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+          }}
+        >
           {playing ? "Pause" : "Play"}
         </button>
       </div>
@@ -202,10 +236,11 @@ export default function TimePlayer({
         </div>
       )}
 
-      {/* row 4: scope toggle (its own line to avoid crowding) */}
-      <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
-        <Seg value="all" label="All" />
-        <Seg value="window" label="Window" />
+      {/* row 4: scope toggle (stacked for clarity) */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 8 }}>
+        <Seg value="all" label="Full timeline" />
+        <Seg value="window" label="Fixed window" />
+        <Seg value="moving" label="Moving window" />
       </div>
 
       {/* row 5: scrubber */}
@@ -225,12 +260,48 @@ export default function TimePlayer({
 
       {/* row 6: speeds on their own line */}
       <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
-        <button className="btn" onClick={() => setSpeed(0.25)}>0.25×</button>
-        <button className="btn" onClick={() => setSpeed(0.5)}>0.5×</button>
-        <button className="btn" onClick={() => setSpeed(1)}>1×</button>
-        <button className="btn" onClick={() => setSpeed(2)}>2×</button>
-        <button className="btn" onClick={() => setSpeed(4)}>4×</button>
-        <button className="btn" onClick={() => setSpeed(8)}>8×</button>
+        <button
+          className="btn"
+          onClick={() => setSpeed(0.25)}
+          style={{ fontFamily: "Montserrat, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" }}
+        >
+          0.25×
+        </button>
+        <button
+          className="btn"
+          onClick={() => setSpeed(0.5)}
+          style={{ fontFamily: "Montserrat, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" }}
+        >
+          0.5×
+        </button>
+        <button
+          className="btn"
+          onClick={() => setSpeed(1)}
+          style={{ fontFamily: "Montserrat, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" }}
+        >
+          1×
+        </button>
+        <button
+          className="btn"
+          onClick={() => setSpeed(2)}
+          style={{ fontFamily: "Montserrat, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" }}
+        >
+          2×
+        </button>
+        <button
+          className="btn"
+          onClick={() => setSpeed(4)}
+          style={{ fontFamily: "Montserrat, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" }}
+        >
+          4×
+        </button>
+        <button
+          className="btn"
+          onClick={() => setSpeed(8)}
+          style={{ fontFamily: "Montserrat, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" }}
+        >
+          8×
+        </button>
       </div>
     </div>
   );

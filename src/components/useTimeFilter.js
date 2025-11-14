@@ -11,7 +11,8 @@ function toEpoch(v) {
 /**
  * Adds playMode:
  *  - "all": ignore brush for playback + filtering (whole domain)
- *  - "window": use [rangeStart, rangeEnd] for playback + filtering
+ *  - "window": play only inside static [rangeStart, rangeEnd] brush
+ *  - "moving": slide the brush window across the whole domain, looping
  */
 export default function useTimeFilter(datasets, selectedField, opts = {}) {
   const { windowSec = 60, speed = 1 } = opts;
@@ -77,37 +78,83 @@ export default function useTimeFilter(datasets, selectedField, opts = {}) {
   const [playing, setPlaying] = useState(false);
   const rafRef = useRef(null);
 
-  // advance cursor respecting mode
-  useEffect(() => {
-    if (!playing || !domain || cursor == null) return;
-    let last = performance.now();
-    const step = (now) => {
-      const dt = now - last; last = now;
-      const winMs = windowSizeSec * 1000;
-      const delta = (dt / 1000) * (winMs * Math.max(0.1, speedFactor));
+ // advance cursor respecting mode
+useEffect(() => {
+  if (!playing || !domain || cursor == null) return;
+  let last = performance.now();
+  const step = (now) => {
+    const dt = now - last; last = now;
+    const winMs = windowSizeSec * 1000;
+    const delta = (dt / 1000) * (winMs * Math.max(0.1, speedFactor));
 
-      const [dmin, dmax] = domain;
-      const endCap = playMode === "window"
-        ? (rangeEnd ?? dmax)
-        : dmax;
+    const [dmin, dmax] = domain;
+    let next = cursor + delta;
 
-      let next = cursor + delta;
-      if (next > endCap) next = endCap;
+    if (playMode === "moving") {
+      // moving window loops over the entire domain
+      const span = dmax - dmin;
+      if (span > 0) {
+        const offset = (next - dmin) % span;
+        next = dmin + (offset >= 0 ? offset : offset + span);
+      } else {
+        next = dmin;
+      }
+    } else if (playMode === "window") {
+      // fixed window: loop inside [rangeStart, rangeEnd] if available,
+      // otherwise loop over full domain
+      const lo = rangeStart ?? dmin;
+      const hi = rangeEnd ?? dmax;
+      const span = hi - lo;
+      if (span > 0) {
+        const offset = (next - lo) % span;
+        next = lo + (offset >= 0 ? offset : offset + span);
+      } else {
+        next = lo;
+      }
+    } else {
+      // "all": loop over the full domain
+      const span = dmax - dmin;
+      if (span > 0) {
+        const offset = (next - dmin) % span;
+        next = dmin + (offset >= 0 ? offset : offset + span);
+      } else {
+        next = dmin;
+      }
+    }
 
-      setCursor(next);
-      rafRef.current = requestAnimationFrame(step);
-    };
+    setCursor(next);
     rafRef.current = requestAnimationFrame(step);
-    return () => cancelAnimationFrame(rafRef.current);
-  }, [playing, domain, cursor, windowSizeSec, speedFactor, playMode, rangeEnd]);
+  };
+  rafRef.current = requestAnimationFrame(step);
+  return () => cancelAnimationFrame(rafRef.current);
+}, [playing, domain, cursor, windowSizeSec, speedFactor, playMode, rangeEnd]);
 
   // filtering (cumulative up to cursor) in chosen scope
   const filtered = useMemo(() => {
     if (!indexed || !domain) return datasets;
 
     const [dmin, dmax] = domain;
-    const lo = playMode === "window" ? (rangeStart ?? dmin) : dmin;
-    const hi = playMode === "window" ? (rangeEnd ?? dmax) : dmax;
+
+    let lo;
+    let hi;
+
+    if (playMode === "window") {
+      lo = rangeStart ?? dmin;
+      hi = rangeEnd ?? dmax;
+    } else if (playMode === "moving") {
+      const baseStart = rangeStart ?? dmin;
+      const baseEnd = rangeEnd ?? dmax;
+      const width = Math.max(1, baseEnd - baseStart);
+      const end = cursor ?? baseEnd;
+      const start = end - width;
+      lo = Math.max(dmin, start);
+      hi = Math.min(dmax, end);
+    } else {
+      // "all" → whole domain
+      lo = dmin;
+      hi = dmax;
+    }
+
     const cutoff = cursor ?? hi;
 
     return (datasets || []).map((d) => {
